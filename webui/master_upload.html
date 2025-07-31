@@ -1,0 +1,109 @@
+
+
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <title>マスタ & 実績アップロード | warehouse‑relocator</title>
+  <link rel="stylesheet" href="style.css" />
+  <style>
+    /* page‑specific tweaks – reuse global palette */
+    main {
+      max-width: 720px;
+      margin: 4rem auto;
+      background: var(--card-bg, #ffffff);
+      padding: 2rem 3rem;
+      border-radius: 8px;
+      box-shadow: 0 2px 6px rgb(0 0 0 / 8%);
+    }
+    h1 {
+      margin-top: 0;
+      font-size: 1.6rem;
+      text-align: center;
+    }
+    .field {
+      margin-bottom: 1.5rem;
+    }
+    .field label {
+      display: block;
+      margin-bottom: 0.25rem;
+      font-weight: 600;
+    }
+    .actions {
+      text-align: center;
+    }
+    .status {
+      margin-top: 1.5rem;
+      text-align: center;
+      font-weight: 600;
+    }
+  </style>
+</head>
+
+<body>
+  <main>
+    <h1>初期マスタ & 入出庫実績ファイル アップロード</h1>
+
+    <p>最初に <strong>SKU マスタ</strong> と <strong>入荷実績</strong> / <strong>出荷実績</strong> の 3 つの Excel ファイルを登録してください。</p>
+
+    <form id="uploadForm">
+      <div class="field">
+        <label for="skuFile">SKU マスタ (SKU.xlsx)</label>
+        <input type="file" id="skuFile" name="files" accept=".xlsx" required />
+      </div>
+
+      <div class="field">
+        <label for="receiptFile">入荷実績 (入荷実績_YYYYMMDD.xlsx)</label>
+        <input type="file" id="receiptFile" name="files" accept=".xlsx" required />
+      </div>
+
+      <div class="field">
+        <label for="shipmentFile">出荷実績 (出荷実績.xlsx)</label>
+        <input type="file" id="shipmentFile" name="files" accept=".xlsx" required />
+      </div>
+
+      <div class="actions">
+        <button type="submit">アップロード</button>
+      </div>
+
+      <div class="status" id="status"></div>
+    </form>
+  </main>
+
+  <script>
+    const form = document.getElementById("uploadForm");
+    const statusBox = document.getElementById("status");
+
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      statusBox.textContent = "アップロード中…";
+
+      const files = [
+        document.getElementById("skuFile").files[0],
+        document.getElementById("receiptFile").files[0],
+        document.getElementById("shipmentFile").files[0],
+      ];
+
+      const fd = new FormData();
+      files.forEach((f) => fd.append("files", f));
+
+      try {
+        const res = await fetch("/uploads/master/", {
+          method: "POST",
+          body: fd,
+        });
+
+        if (!res.ok) throw new Error(await res.text());
+
+        statusBox.textContent = "アップロード完了！🎉";
+        statusBox.style.color = "green";
+        form.reset();
+      } catch (err) {
+        console.error(err);
+        statusBox.textContent = "アップロード失敗: " + err;
+        statusBox.style.color = "red";
+      }
+    });
+  </script>
+</body>
+</html>

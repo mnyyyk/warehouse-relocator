@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <link rel="stylesheet" href="style.css" />
+  <title>warehouse‑relocator – 在庫アップロード</title>
+  <script defer src="main.js"></script>
+</head>
+<body>
+
+  <nav class="nav-links">
+    <a href="master_upload.html">マスターアップロード</a> |
+    <a href="analysis.html">データ分析</a>
+  </nav>
+
+  <h1>在庫データをアップロード</h1>
+  <form id="uploadForm" onsubmit="handleSubmit(event)">
+    <div>
+      在庫データ: <input type="file" name="inv" accept=".xlsx" required />
+    </div>
+    <div>
+      最大移動SKU数: <input type="number" name="max_moves" value="100" min="1" />
+    </div>
+    <button type="submit">最適化を実行</button>
+  </form>
+
+  <h2 id="kpi"></h2>
+  <div id="result"></div>
+</body>
+</html>
