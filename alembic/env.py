@@ -4,9 +4,11 @@ from logging.config import fileConfig
 
 from alembic import context
 # --- project imports --------------------------------------------------------
-from app.db import engine, Base  # SQLModel engine and metadata
-# Ensure all model modules are imported so their tables are registered
-from app.db import models  # noqa: F401
+from app.db import engine  # existing SQLAlchemy engine (reuse)
+from app.models_native.base import Base  # native SQLAlchemy 2 DeclarativeBase
+
+# Use native SQLAlchemy 2 model metadata
+target_metadata = Base.metadata
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
@@ -21,8 +23,6 @@ if config.config_file_name is not None:
 # for 'autogenerate' support
 # from myapp import mymodel
 # target_metadata = mymodel.Base.metadata
-target_metadata = Base.metadata
-
 # other values from the config, defined by the needs of env.py,
 # can be acquired:
 # my_important_option = config.get_main_option("my_important_option")
