@@ -1,0 +1,19 @@
+# ---- Python ----
+__pycache__/
+*.py[cod]
+.env
+# ---- Node ----
+node_modules/
+# ---- Editor / OS ----
+.DS_Store
+.idea/
+.vscode/
+# ---- Build / Docker ----
+*.egg-info/
+dist/
+backend/.venv/
+frontend/.next/
+docker/**/cache/
+# ---- Data ----
+sample_data/
+*.xlsx
