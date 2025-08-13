@@ -1,0 +1,84 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [dev, main]
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: warehouse_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Cache Poetry venv
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pypoetry
+          key: poetry-${{ hashFiles('backend/pyproject.toml', 'backend/poetry.lock') }}
+
+      - name: Install Poetry
+        run: pip install poetry
+
+      - name: Install deps
+        run: |
+          cd backend
+          poetry install --no-interaction --no-ansi
+
+      - name: Prepare database
+        env:
+          DATABASE_URL: postgresql+psycopg://test:test@localhost:5432/warehouse_test
+        run: |
+          cd backend
+          poetry run alembic upgrade head
+
+      - name: Lint (black & isort)
+        env:
+          DATABASE_URL: postgresql+psycopg://test:test@localhost:5432/warehouse_test
+        run: |
+          cd backend
+          poetry run black . --check
+          poetry run isort . --check
+
+      - name: Tests
+        env:
+          DATABASE_URL: postgresql+psycopg://test:test@localhost:5432/warehouse_test
+        run: |
+          cd backend
+          poetry run pytest -q
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install deps
+        run: npm ci    # lockfile install
+
+      - name: Lint (eslint / next lint)
+        run: npm run lint

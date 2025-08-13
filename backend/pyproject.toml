@@ -1,0 +1,48 @@
+[project]
+name = "warehouse-optimizer"
+version = "0.1.0"
+description = ""
+authors = [
+    {name = "Your Name",email = "you@example.com"}
+]
+readme = "README.md"
+packages = [{ include = "app" }]
+requires-python = ">=3.12,<4.0"
+dependencies = [
+    "fastapi (>=0.116.1,<0.117.0)",
+    "uvicorn[standard] (>=0.35.0,<0.36.0)",
+    "pydantic (>=2.11.7,<3.0.0)",
+    "sqlmodel (>=0.0.24,<0.0.25)",
+    "asyncpg (>=0.30.0,<0.31.0)",
+    "python-dotenv (>=1.1.1,<2.0.0)",
+    "psycopg2-binary (>=2.9.10,<3.0.0)",
+    "pandas (>=2.3.1,<3.0.0)",
+    "openpyxl (>=3.1.5,<4.0.0)",
+    "python-multipart (>=0.0.20,<0.0.21)",
+    "chardet (>=5.2.0,<6.0.0)",
+    "alembic (>=1.16.4,<2.0.0)",
+    "celery[redis] (>=5.5.3,<6.0.0)",
+    "openai (>=1.0,<2.0)"
+]
+
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.poetry.group.dev.dependencies]
+black = "^24.4"
+isort = "^5.13"
+httpx = "^0.27"
+pytest = "^8.2"
+pytest-asyncio = "^0.23"
+alembic = "^1.16.4"
+python-multipart = "^0.0.20"
+
+# ------------------------------------------------------------------------
+# Poetry configuration: disable package mode
+# This prevents “The current project could not be installed: No file/folder
+# found for package warehouse-optimizer” during `poetry install`.
+# ------------------------------------------------------------------------
+[tool.poetry]
+package-mode = false

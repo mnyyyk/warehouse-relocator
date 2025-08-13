@@ -1,0 +1,40 @@
+
+
+version: "3.9"
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: wh_optim_pg
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-whuser}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-whpass}
+      POSTGRES_DB: ${POSTGRES_DB:-warehouse}
+      TZ: Asia/Tokyo
+    ports:
+      - "5432:5432"          # 開発用途、必要に応じて削除
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER"]
+      interval: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: wh_optim_redis
+    restart: unless-stopped
+    ports:
+      - "6380:6379"          # ホスト 6380 → コンテナ 6379
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      retries: 5
+
+networks:
+  default:
+    name: wh_optim_net
+
+volumes:
+  pgdata:
