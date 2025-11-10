@@ -1147,7 +1147,7 @@ def _inventory_mapper(row: pd.Series) -> Inventory:
 
     # 品質区分名（列が無い場合は None にフォールバック）
     try:
-        quality = _col(row, "品質区分名", "quality_name")
+        quality = _col(row, "品質区分", "品質区分名", "quality_name", "品質", "quality")
     except KeyError:
         quality = None
 
