@@ -41,7 +41,11 @@ ENCODINGS: Final[list[str]] = [
     "utf-16-le",
     "utf-16-be",
     "cp932",
+    "shift_jis",
+    "euc_jp",
+    "iso2022_jp",
     "iso8859-1",
+    "latin1",
 ]
 
 
@@ -77,31 +81,136 @@ def read_dataframe(file: UploadFile | str | Path | bytes | bytearray) -> pd.Data
     mime, _ = mimetypes.guess_type(filename)
     lower_name = filename.lower()
 
-    # ----------------------------- CSV ------------------------------------
-    if mime in ("text/csv", None) or lower_name.endswith(".csv"):
-        mime, _ = mimetypes.guess_type(filename)
-        # If the first KB contains many NUL bytes the file is likely UTF‑16
-        might_be_utf16 = b"\x00" in raw[:1024]
-        enc_guess: str = (chardet.detect(raw[:4096]).get("encoding") or "").lower()
-
-        # Build trial order: UTF‑16 first when it looks likely, then the guess, then fallbacks
-        enc_try_order = (
-            ["utf-16", "utf-16-le", "utf-16-be"] if might_be_utf16 else []
-        ) + [enc_guess] + ENCODINGS
-
-        for enc in _unique(enc_try_order):
+    # ----------------------------- Excel first ----------------------------------
+    # Check for Excel files BEFORE CSV (to avoid treating .xlsx as CSV when mime=None)
+    if lower_name.endswith((".xlsx", ".xls")) or mime in (
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "application/vnd.ms-excel",
+    ):
+        # .xlsx は openpyxl の read_only + values_only で高速ロードを試す
+        if lower_name.endswith(".xlsx") or mime == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet":
             try:
-                # csv.Sniffer does not work well on UTF‑16 so we force comma there.
-                sep_param = None if enc.startswith("utf-8") or enc == "cp932" else ","
+                from openpyxl import load_workbook  # type: ignore
+                wb = load_workbook(io.BytesIO(raw), read_only=True, data_only=True)
+                ws = wb.active
+                # 先頭行をヘッダーとして採用（完全空行はスキップ）
+                rows_it = ws.iter_rows(values_only=True)
+                headers = None
+                data_rows: list[list[str]] = []
+                for r in rows_it:
+                    if r is None:
+                        continue
+                    # openpyxl はタプルを返す
+                    row_vals = ["" if (c is None) else str(c) for c in r]
+                    # 完全空行はスキップ
+                    if all(v == "" for v in row_vals):
+                        continue
+                    if headers is None:
+                        headers = row_vals
+                        continue
+                    # 列数をヘッダーに合わせて調整
+                    if len(row_vals) < len(headers):
+                        row_vals.extend([""] * (len(headers) - len(row_vals)))
+                    elif len(row_vals) > len(headers):
+                        row_vals = row_vals[: len(headers)]
+                    data_rows.append(row_vals)
+                if headers is None:
+                    raise ValueError("Excelにヘッダー行がありません")
+                # DataFrame化
+                df = pd.DataFrame(data_rows, columns=headers)
+            except ImportError as e:
+                raise ValueError(
+                    "Excelファイル(.xlsx)を読み込むには 'openpyxl' が必要です。CSVでアップロードするか、サーバに openpyxl をインストールしてください。"
+                ) from e
+            except Exception:
+                # 失敗時は pandas 経由にフォールバック
+                try:
+                    df = pd.read_excel(
+                        io.BytesIO(raw), dtype=str, keep_default_na=False, engine="openpyxl"
+                    )
+                except Exception as e2:
+                    raise ValueError(f"Excelの読み込みに失敗しました: {e2}") from e2
+        else:
+            # .xls はサポート外（xlrd 非対応）。pandas で試み、失敗なら親切エラー。
+            try:
+                df = pd.read_excel(io.BytesIO(raw), dtype=str, keep_default_na=False)
+            except Exception as e:
+                raise ValueError(".xls は読み込み非推奨です。CSV へ保存してアップロードしてください。") from e
 
-                df_try = pd.read_csv(
-                    io.BytesIO(raw),
-                    encoding=enc,
-                    dtype=str,
-                    keep_default_na=False,
-                    sep=sep_param,
-                    engine="python",
-                )
+        # Clean up columns: remove duplicates
+        df = df.loc[:, ~df.columns.duplicated()]
+        return df
+
+    # ----------------------------- CSV ------------------------------------
+    if mime in ("text/csv",) or lower_name.endswith(".csv") or mime is None:
+        mime, _ = mimetypes.guess_type(filename)
+        # Check for UTF-16 BOM markers
+        has_utf16_bom = (
+            raw[:2] in (b"\xff\xfe", b"\xfe\xff")  # UTF-16 LE/BE BOM
+        )
+        # Check for UTF-16 without BOM (every other byte is null in ASCII range)
+        might_be_utf16_no_bom = (
+            not has_utf16_bom 
+            and len(raw) > 100
+            and raw[1:100:2].count(b"\x00"[0]) > 30  # Many null bytes in odd positions
+        )
+        
+        # Fast path encodings to try first
+        # Always try common encodings first, UTF-16 only if BOM detected
+        if has_utf16_bom:
+            enc_try_order = ["utf-16", "utf-16-le", "utf-16-be", "utf-8", "utf-8-sig", "cp932", "shift_jis", "euc_jp"]
+        elif might_be_utf16_no_bom:
+            enc_try_order = ["utf-8", "utf-8-sig", "cp932", "shift_jis", "euc_jp", "utf-16-le", "utf-16-be"]
+        else:
+            enc_try_order = ["utf-8", "utf-8-sig", "cp932", "shift_jis", "euc_jp", "latin1"]
+        
+        last_error = None
+
+        for enc in enc_try_order:
+            try:
+                # Skip UTF-16 if no BOM and we get BOM error
+                if enc in ("utf-16", "utf-16-le", "utf-16-be") and not has_utf16_bom:
+                    # Try to decode a small sample first to check for BOM requirement
+                    try:
+                        raw[:100].decode(enc)
+                    except UnicodeDecodeError as test_err:
+                        if "BOM" in str(test_err):
+                            continue  # Skip this encoding
+                
+                # csv.Sniffer does not work well on UTF‑16 so we force comma there.
+                sep_param = None if enc.startswith("utf-8") or enc in ("cp932", "shift_jis", "euc_jp") else ","
+
+                # Try fast path: pyarrow engine for UTF-8 family when available
+                use_arrow = False
+                if sep_param is None and enc in ("utf-8", "utf-8-sig"):
+                    try:
+                        import pyarrow  # type: ignore  # noqa: F401
+                        use_arrow = True
+                    except Exception:
+                        use_arrow = False
+
+                if use_arrow:
+                    df_try = pd.read_csv(
+                        io.BytesIO(raw),
+                        encoding=enc,
+                        keep_default_na=False,
+                        engine="pyarrow",
+                        on_bad_lines='skip',  # Skip problematic lines
+                    )
+                    # Ensure stringy behavior for downstream mappers
+                    for c in df_try.columns:
+                        df_try[c] = df_try[c].astype(str)
+                else:
+                    df_try = pd.read_csv(
+                        io.BytesIO(raw),
+                        encoding=enc,
+                        dtype=str,
+                        keep_default_na=False,
+                        sep=sep_param,
+                        engine="python",
+                        on_bad_lines='skip',  # Skip problematic lines
+                        encoding_errors='strict',  # Raise error on invalid encoding
+                    )
                 # Validate parse result for delimiter detection failure
                 if df_try.shape[1] == 1 and b"," in raw[:1024]:
                     try:
@@ -111,6 +220,8 @@ def read_dataframe(file: UploadFile | str | Path | bytes | bytearray) -> pd.Data
                             dtype=str,
                             keep_default_na=False,
                             sep=",",        # explicit comma delimiter
+                            on_bad_lines='skip',
+                            encoding_errors='strict',
                         )
                         if df_try2.shape[1] > 1:
                             df_try = df_try2
@@ -128,6 +239,8 @@ def read_dataframe(file: UploadFile | str | Path | bytes | bytearray) -> pd.Data
                                 dtype=str,
                                 keep_default_na=False,
                                 sep=_sep,
+                                on_bad_lines='skip',
+                                encoding_errors='strict',
                             )
                             if df_alt.shape[1] > 1:
                                 df_try = df_alt
@@ -135,82 +248,93 @@ def read_dataframe(file: UploadFile | str | Path | bytes | bytearray) -> pd.Data
                         except Exception:
                             # Try next delimiter
                             continue
-                df = df_try
-                break
-            except UnicodeDecodeError:
+                # Success! Return immediately
+                return df_try
+            except (UnicodeDecodeError, pd.errors.ParserError) as e:
+                last_error = e
                 continue
-        else:  # すべて失敗
+        
+        # Fast path failed, try chardet as expensive fallback
+        try:
+            enc_guess: str = (chardet.detect(raw[:4096]).get("encoding") or "").lower()
+            if enc_guess and enc_guess not in enc_try_order:
+                # Add fallback encodings
+                fallback_encs = [enc_guess] + [e for e in ENCODINGS if e not in enc_try_order]
+                
+                for enc in fallback_encs:
+                    try:
+                        sep_param = None if enc.startswith("utf-8") or enc in ("cp932", "shift_jis", "euc_jp") else ","
+                        df_try = pd.read_csv(
+                            io.BytesIO(raw),
+                            encoding=enc,
+                            dtype=str,
+                            keep_default_na=False,
+                            sep=sep_param,
+                            engine="python",
+                            on_bad_lines='skip',
+                            encoding_errors='strict',
+                        )
+                        # Validate delimiter detection
+                        if df_try.shape[1] == 1 and b"," in raw[:1024]:
+                            df_try2 = pd.read_csv(
+                                io.BytesIO(raw),
+                                encoding=enc,
+                                dtype=str,
+                                keep_default_na=False,
+                                sep=",",
+                                on_bad_lines='skip',
+                                encoding_errors='strict',
+                            )
+                            if df_try2.shape[1] > 1:
+                                df_try = df_try2
+                        return df_try
+                    except (UnicodeDecodeError, pd.errors.ParserError):
+                        continue
+        except Exception:
+            pass
+        
+        # Last resort: try latin1 (accepts all byte values)
+        try:
+            df_try = pd.read_csv(
+                io.BytesIO(raw),
+                encoding="latin1",
+                dtype=str,
+                keep_default_na=False,
+                engine="python",
+                on_bad_lines='skip',
+            )
+            # Validate delimiter detection
+            if df_try.shape[1] == 1 and b"," in raw[:1024]:
+                df_try2 = pd.read_csv(
+                    io.BytesIO(raw),
+                    encoding="latin1",
+                    dtype=str,
+                    keep_default_na=False,
+                    sep=",",
+                    on_bad_lines='skip',
+                )
+                if df_try2.shape[1] > 1:
+                    df_try = df_try2
+            # If we got at least some data, return it
+            if not df_try.empty and df_try.shape[1] > 0:
+                return df_try
+        except Exception:
+            pass
+        
+        # All attempts failed
+        if last_error:
+            raise ValueError(f"Cannot decode CSV – tried {len(enc_try_order)} encodings, last error: {last_error}")
+        else:
             raise ValueError("Cannot decode CSV – unknown encoding")
 
-    # ----------------------------- Excel ----------------------------------
-    elif lower_name.endswith((".xlsx", ".xls")):
-        df = pd.read_excel(io.BytesIO(raw), dtype=str, keep_default_na=False)
-
+    # ----------------------------- unsupported file type ----------------------------------
     else:
-        raise ValueError("Unsupported file type (only .csv/.xlsx/.xls accepted)")
+        raise ValueError(f"Unsupported file type: {filename}. Please upload a CSV or Excel file.")
 
-    # ---------------------- column normalisation --------------------------
-    # 1. Unicode‑normalise to NFKC so that full‑width ASCII (e.g. “ＳＫＵ”)
-    #    collapses into regular ASCII (“SKU”), and weird whitespace
-    #    variants are removed consistently.
-    # 2. Strip BOM, full‑width spaces, leading/trailing spaces.
-    df.columns = (
-        df.columns.astype(str)
-        .map(lambda s: unicodedata.normalize("NFKC", s))
-        .str.replace("\ufeff", "", regex=False)   # strip BOM
-        .str.replace("　", "", regex=False)       # full‑width space
-        .str.strip()
-    )
-
-    # ---------------------- header alias folding --------------------------
-    # Map synonymous header names that appear in exports from various WMS /
-    # accounting systems to the canonical labels expected by the upload
-    # mappers.  This prevents “header not found” errors without forcing
-    # users to pre‑clean their files.
-    _ALIASES = {
-        # --- inventory ----------------------------------------------------
-        "ロケーションコード": "ロケーション",
-        "location": "ロケーション",
-        "Location": "ロケーション",
-        "ロケーションID": "ロケーション",
-        "ロケーションId": "ロケーション",
-        "在庫数(引当数を含む)": "在庫数",
-        "数量": "在庫数",
-        "数": "在庫数",
-        # --- SKU -----------------------------------------------------------
-        "SKU": "商品ID",
-        "sku": "商品ID",
-        "item_internalid": "商品ID",
-        # additional common variations can be added here
-    }
-
-    # Rename in‑place where an alias is present
-    df.rename(
-        columns={c: _ALIASES[c] for c in df.columns if c in _ALIASES},
-        inplace=True,
-    )
-
-    # ------------------------------------------------------------------
-    # Heuristic fallback: handle vendor‑specific header variants that
-    # don’t match the alias table above but still *contain* a canonical
-    # keyword (e.g. "ロケーション（棚番）", "location code" …).
-    # We only rename the *first* matching column for each canonical key
-    # so we won’t accidentally rename multiple, similarly‑named columns.
-    # ------------------------------------------------------------------
-    def _maybe_rename(keyword: str, canonical: str) -> None:
-        if canonical in df.columns:
-            return
-        for col in df.columns:
-            if keyword.lower() in col.lower():
-                df.rename(columns={col: canonical}, inplace=True)
-                break
-
-    # inventory‑specific common variants
-    _maybe_rename("ロケーション", "ロケーション")
-    _maybe_rename("location", "ロケーション")
-    _maybe_rename("location code", "ロケーション")
-    _maybe_rename("在庫", "在庫数")
-    _maybe_rename("数量", "在庫数")
+    # NOTE: ヘッダ名は原則としてそのまま返す（テストは生ヘッダを期待）。
+    # 以前は NFKC 正規化や別名畳み込みを行っていたが、
+    # それらはアップロード層（mappers）で多名対応することで吸収する。
+    # ここではパースの堅牢性のみに責務を絞る。
 
     if df.empty:
         raise ValueError("File has no data rows")
