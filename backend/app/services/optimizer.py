@@ -1156,15 +1156,8 @@ def plan_relocation(
     # Generate comprehensive summary report
     try:
         planned_count = len(moves)  # All planned moves
-        # Get rejection stats if available
-        try:
-            from app.services.optimizer import get_last_rejection_debug
-            rej_debug = get_last_rejection_debug() or {}
-            accepted_count = rej_debug.get("accepted", planned_count)
-            rejected_count = planned_count - accepted_count
-        except:
-            accepted_count = planned_count
-            rejected_count = 0
+        accepted_count = planned_count  # Assume all accepted at this stage
+        rejected_count = 0
         
         report = _generate_comprehensive_report(
             moves=moves,
@@ -1172,6 +1165,7 @@ def plan_relocation(
             accepted_count=accepted_count,
             rejected_count=rejected_count,
             sku_master=sku_master,
+            inventory=inventory,  # Pass inventory for proper consolidation analysis
         )
         
         # Store report for retrieval
@@ -1216,6 +1210,7 @@ def _generate_comprehensive_report(
     accepted_count: int,
     rejected_count: int,
     sku_master: Optional[pd.DataFrame] = None,
+    inventory: Optional[pd.DataFrame] = None,
 ) -> str:
     """
     Generate a comprehensive text report for relocation results.
@@ -1226,6 +1221,7 @@ def _generate_comprehensive_report(
         accepted_count: Number of accepted moves
         rejected_count: Number of rejected moves
         sku_master: SKU master dataframe (for pack_qty lookup)
+        inventory: Current inventory dataframe (for before-state analysis)
         
     Returns:
         Formatted text report with proper SKU consolidation analysis
@@ -1287,14 +1283,41 @@ def _generate_comprehensive_report(
         if to_lv == 1 and 15 <= to_col <= 30 and 1 <= to_dep <= 3:
             high_ship_to_hot += 1
     
-    # Analyze SKU consolidation (CORRECT VERSION)
+    # Analyze SKU consolidation (CORRECT VERSION with inventory data)
     sku_consolidations: list[tuple[str, int, int]] = []
-    for sku in sorted(unique_skus):
-        from_count = len(sku_from_locs.get(sku, set()))
-        to_count = len(sku_to_locs.get(sku, set()))
-        # Only include if there's actual consolidation (many->few)
-        if from_count > to_count:
-            sku_consolidations.append((sku, from_count, to_count))
+    
+    if inventory is not None and not inventory.empty:
+        # Count locations per SKU in original inventory
+        sku_before_locs: dict[str, set[str]] = {}
+        for _, row in inventory.iterrows():
+            sku_id = str(row.get("商品ID", ""))
+            loc = str(row.get("ロケーション", ""))
+            if sku_id and loc:
+                sku_before_locs.setdefault(sku_id, set()).add(loc)
+        
+        # For each moved SKU, calculate after-move location count
+        for sku in sorted(unique_skus):
+            before_locs = sku_before_locs.get(sku, set())
+            moved_from = sku_from_locs.get(sku, set())
+            moved_to = sku_to_locs.get(sku, set())
+            
+            # After-move = (before - moved_from) + moved_to
+            after_locs = (before_locs - moved_from) | moved_to
+            
+            before_count = len(before_locs)
+            after_count = len(after_locs)
+            
+            # Only include if there's actual consolidation (many->few)
+            if before_count > after_count:
+                sku_consolidations.append((sku, before_count, after_count))
+    else:
+        # Fallback: analyze only within moves (no inventory data)
+        for sku in sorted(unique_skus):
+            from_count = len(sku_from_locs.get(sku, set()))
+            to_count = len(sku_to_locs.get(sku, set()))
+            # Only include if there's actual consolidation (many->few)
+            if from_count > to_count:
+                sku_consolidations.append((sku, from_count, to_count))
     
     # Sort by consolidation impact (largest reduction first)
     sku_consolidations.sort(key=lambda x: x[1] - x[2], reverse=True)
