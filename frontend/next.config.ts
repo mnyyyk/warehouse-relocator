@@ -49,4 +49,3 @@ const nextConfig: NextConfig = {
 };
 
 export default nextConfig;
-# Build 20251117003829
