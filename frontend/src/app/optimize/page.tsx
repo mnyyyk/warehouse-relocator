@@ -1541,6 +1541,9 @@ AIを使用することで、より効率的で実用的な配置提案が得ら
             />
           </label>
 
+          {/* 強制改行 */}
+          <div className="w-full"></div>
+
           <button
             onClick={startRelocation}
             disabled={relocating}
