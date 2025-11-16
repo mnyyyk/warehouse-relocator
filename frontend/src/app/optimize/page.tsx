@@ -1420,6 +1420,18 @@ export default function OptimizePage() {
 
           {/* パラメータ */}
           <label className="text-sm">
+            最大移動行数：
+            <input
+              type="number"
+              className="ml-2 rounded-lg border border-black/10 bg-white px-3 py-2 text-sm w-28 focus:outline-none focus:ring-2 focus:ring-black/20"
+              min={0}
+              value={maxMovesInput}
+              onChange={(e) => setMaxMovesInput(e.target.value)}
+              placeholder="空欄=無制限"
+              title="0 または空欄で無制限（バックエンド既定）"
+            />
+          </label>
+          <label className="text-sm">
             充填率上限（0.1–1.0）：
             <input
               type="number"
@@ -1435,18 +1447,6 @@ export default function OptimizePage() {
 0.8 = 80%（保守的な設定）
 
 例：0.90の場合、100個入る棚には最大90個まで配置します。"
-            />
-          </label>
-          <label className="text-sm">
-            最大移動行数：
-            <input
-              type="number"
-              className="ml-2 rounded-lg border border-black/10 bg-white px-3 py-2 text-sm w-28 focus:outline-none focus:ring-2 focus:ring-black/20"
-              min={0}
-              value={maxMovesInput}
-              onChange={(e) => setMaxMovesInput(e.target.value)}
-              placeholder="空欄=無制限"
-              title="0 または空欄で無制限（バックエンド既定）"
             />
           </label>
           <label className="text-sm">
