@@ -770,8 +770,9 @@ const OptimizePage: NextPage & { pageTitle?: string } = () => {
       
       while (true) {
         const blockParam = blocks.length ? `&block=${blocks.join(',')}` : '';
+        console.log(`[exportLocationSnapshot] リクエスト: limit=${limit}, offset=${offset}, blocks=${blocks.join(',')}`);
         const { json } = await getWithFallback(`/v1/debug/inventory?limit=${limit}&offset=${offset}${blockParam}`);
-        console.log(`在庫データ取得: offset=${offset}, total=${json?.total}`, json);
+        console.log(`[exportLocationSnapshot] レスポンス: offset=${offset}, total=${json?.total}, rows=${json?.rows?.length || 0}`);
         const rows = Array.isArray(json?.rows) ? json.rows : [];
         if (!rows.length) break;
         
@@ -862,8 +863,16 @@ const OptimizePage: NextPage & { pageTitle?: string } = () => {
       URL.revokeObjectURL(url);
       
     } catch (error) {
-      console.error('ロケーション一覧のエクスポートに失敗しました:', error);
-      alert(`ロケーション一覧のエクスポートに失敗しました: ${error instanceof Error ? error.message : String(error)}`);
+      console.error('[exportLocationSnapshot] エラー詳細:', {
+        error,
+        errorType: error?.constructor?.name,
+        errorMessage: error instanceof Error ? error.message : String(error),
+        errorStack: error instanceof Error ? error.stack : undefined,
+        blocks,
+        movesCount: moves.length
+      });
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      alert(`ロケーション一覧のエクスポートに失敗しました:\n\n${errorMsg}\n\n詳細はブラウザのコンソールを確認してください。`);
     } finally {
       setLocationExporting(false);
     }
