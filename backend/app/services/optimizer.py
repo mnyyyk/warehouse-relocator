@@ -86,7 +86,7 @@ class OptimizerConfig:
     # --- Eviction chain (bounded multi-step relocation) ---
     chain_depth: int = 0            # 0=disabled; try 2 to enable shallow chains
     eviction_budget: int = 0        # max number of eviction (auxiliary) moves
-    touch_budget: int = 0           # max number of distinct locations we can touch
+    touch_budget: int = 1000        # max number of distinct locations we can touch
     buffer_slots: int = 0           # reserved empty-ish slots for temporary staging (0=disabled)
 # -------------------------------
 # Additional helpers for hard constraints and pack clustering

@@ -1341,12 +1341,6 @@ const OptimizePage: NextPage & { pageTitle?: string } = () => {
         </section>
       )}
 
-      {/* 効率化サマリー */}
-      {summary && !summaryReport && (
-        <section className="bg-white rounded-2xl shadow-sm ring-1 ring-black/5 p-6">
-          <SummaryPanel data={summary} />
-        </section>
-      )}
 
       <section className="bg-white rounded-2xl shadow-sm ring-1 ring-black/5 p-6">
         <h2 className="text-lg font-semibold mb-4">対象とパラメータ</h2>
