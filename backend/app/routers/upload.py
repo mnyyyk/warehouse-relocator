@@ -65,10 +65,10 @@ from app.services.metrics import recompute_all_sku_metrics
 from app.services.optimizer import (
     plan_relocation,
     OptimizerConfig,
-    get_last_rejection_debug,
     get_last_relocation_debug,
     get_current_trace_id,
     sse_events,
+    get_summary_report,
 )
 
 
@@ -2412,17 +2412,8 @@ def relocation_start(
     except Exception:
         used_trace_id = getattr(cfg, "trace_id", None)
 
-    # Always include a compact rejection summary in the response
-    try:
-        _rej = get_last_rejection_debug() or {}
-        rej = {
-            "planned": _rej.get("planned"),
-            "accepted": _rej.get("accepted"),
-            "rejections": _rej.get("rejections", {}),
-            "examples": _rej.get("examples", {}),
-        }
-    except Exception:
-        rej = {}
+    # Rejection debug data removed - all moves are now accepted
+    rej = {}
 
     # --- Build a compact efficiency summary for UI ---
     def _parse_loc8(loc: str):
@@ -2600,10 +2591,8 @@ def relocation_last_debug(trace_id: Optional[str] = None):
         trace_id: Optional trace ID to retrieve specific optimization result.
                   If not provided, returns the latest result.
     """
-    try:
-        rej = get_last_rejection_debug() or {}
-    except Exception:
-        rej = {}
+    # Rejection debug removed - all moves now accepted
+    rej = {}
     try:
         rel = get_last_relocation_debug() or {}
     except Exception:
