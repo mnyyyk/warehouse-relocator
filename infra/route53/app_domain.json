@@ -1,0 +1,11 @@
+{
+  "Changes": [{
+    "Action": "UPSERT",
+    "ResourceRecordSet": {
+      "Name": "app.warehouse-optimizer.net",
+      "Type": "A",
+      "TTL": 300,
+      "ResourceRecords": [{"Value": "76.76.21.21"}]
+    }
+  }]
+}

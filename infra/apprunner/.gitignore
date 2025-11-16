@@ -1,0 +1,8 @@
+# Local Terraform state & caches
+.terraform/
+terraform.tfstate
+terraform.tfstate.*
+
+# Sensitive vars (do not commit real secrets)
+terraform.tfvars
+*.auto.tfvars
