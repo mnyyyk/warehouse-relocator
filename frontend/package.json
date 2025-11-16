@@ -9,8 +9,10 @@
     "lint": "next lint"
   },
   "dependencies": {
+    "chart.js": "^4.4.1",
     "next": "15.4.5",
     "react": "19.1.0",
+    "react-chartjs-2": "^5.2.0",
     "react-dom": "19.1.0",
     "react-dropzone": "^14.3.8",
     "react-hot-toast": "^2.5.2"
