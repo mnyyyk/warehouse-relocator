@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { NextPage } from 'next';
 
 // ===== API helpers =====
+// Last updated: 2025-11-17 - Fixed limit=500 for inventory endpoint
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE || 'http://127.0.0.1:8000';
 
 async function postWithFallback(path: string, payload: any): Promise<{ json: any; via: 'proxy' | 'direct' }>{
