@@ -30,13 +30,12 @@ except ImportError:  # pragma: no cover
 from sqlmodel import Session
 
 try:
-    # The optimiser might not exist yet during the scaffolding phase.
-    from app.services.optimizer import optimise_relocation  # type: ignore
-except ModuleNotFoundError:  # pragma: no cover
+    from app.services.optimizer import plan_relocation as optimise_relocation  # type: ignore
+except ImportError:  # pragma: no cover
     def optimise_relocation(  # type: ignore
         *,  # keep kwargs‑only interface
         max_moves: int = 500,
-        fill_rate: float = 0.95,
+        fill_rate: float = 0.90,
         weights: Mapping[str, float] | None = None,
         **unused: Any,
     ) -> list[dict[str, Any]]:
@@ -64,7 +63,7 @@ def run_relocation_task(
     job_id: str | None = None,
     block_codes: list[str] | None = None,
     max_moves: int = 500,
-    fill_rate: float = 0.95,
+    fill_rate: float = 0.90,
     weights: Mapping[str, float] | None = None,
 ) -> dict[str, Any]:
     """
