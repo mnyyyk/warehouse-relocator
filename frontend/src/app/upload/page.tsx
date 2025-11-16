@@ -1,21 +1,12 @@
-import Head from 'next/head';
-import type { NextPage } from 'next';
+'use client';
+
 import FileUploader from '@/components/FileUploader';
 
-// ページ側では Layout を使わない（_app.tsx 側で包む）
-// Topbar にタイトルを渡すための型
-type PageWithMeta = NextPage & {
-  pageTitle?: string;
-  pageSubtitle?: string;
-};
+// App Router uses metadata export for head management
 
-const UploadPage: PageWithMeta = () => {
+export default function UploadPage() {
   return (
     <>
-      <Head>
-        <title>取込 | Warehouse Optimizer</title>
-      </Head>
-
       <main className="px-4 sm:px-6 lg:px-8 py-6" role="main">
         <header className="flex items-end justify-between mb-6">
           <h1 className="text-2xl font-semibold tracking-tight">ファイル取込</h1>
@@ -80,9 +71,4 @@ const UploadPage: PageWithMeta = () => {
       </main>
     </>
   );
-};
-
-// Topbar へタイトルを渡す（_app.tsx が利用）
-UploadPage.pageTitle = '取込';
-
-export default UploadPage;
+}

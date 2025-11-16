@@ -1,5 +1,6 @@
+'use client';
+
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { NextPage } from 'next';
 
 // ===== API helpers =====
 // Last updated: 2025-11-17 - Fixed limit=500 for inventory endpoint
@@ -192,7 +193,7 @@ function coerceDropDetails(json: any): DropDetail[] {
     }));
 }
 
-const OptimizePage: NextPage & { pageTitle?: string } = () => {
+export default function OptimizePage() {
   // ---- Common selectors ----
   const [blockText, setBlockText] = useState('B');
   const blocks = useMemo(() => blockText.split(',').map((s) => s.trim()).filter(Boolean), [blockText]);
@@ -2066,7 +2067,4 @@ Excelで開いて詳細分析や作業計画の作成に活用できます。"
       </section>
     </main>
   );
-};
-
-OptimizePage.pageTitle = 'リロケーション（最適化）';
-export default OptimizePage;
+}

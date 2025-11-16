@@ -1,3 +1,5 @@
+'use client';
+
 import React, { useCallback, useMemo, useState, useEffect } from 'react';
 import FileUploader from '@/components/FileUploader';
 
