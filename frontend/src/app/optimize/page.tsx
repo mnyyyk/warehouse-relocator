@@ -1418,6 +1418,9 @@ export default function OptimizePage() {
             </button>
           </div>
 
+          {/* 強制改行 */}
+          <div className="w-full"></div>
+
           {/* パラメータ */}
           <label className="text-sm">
             最大移動行数：
