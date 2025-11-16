@@ -764,7 +764,7 @@ const OptimizePage: NextPage & { pageTitle?: string } = () => {
       const afterMoves = new Map<string, any>();
       
       // 現在の在庫状態を取得
-      const limit = 1000;
+      const limit = 500;  // バックエンドの最大値に合わせる
       let offset = 0;
       const inventoryRows: any[] = [];
       
