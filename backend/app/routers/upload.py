@@ -2395,6 +2395,23 @@ def relocation_start(
 
     # Call optimizer with signature-agnostic shim; if it fails, fall back to
     # a direct call using the current optimizer signature.
+    
+    # Debug: SKUマスターとのマッチング状況を確認
+    inv_with_volume = 0
+    if not inv_df.empty and not sku_df.empty:
+        try:
+            # SKUマスターのvolume情報を持つSKUリスト
+            sku_with_vol = set(sku_df[sku_df["volume_m3"] > 0]["商品ID"].astype(str))
+            # 在庫データのSKU
+            inv_skus = set(inv_df["商品ID"].astype(str))
+            # マッチするSKU
+            matched_skus = inv_skus & sku_with_vol
+            # マッチするSKUの在庫行数
+            inv_with_volume = len(inv_df[inv_df["商品ID"].astype(str).isin(matched_skus)])
+            logger.info(f"[relocation_start] Volume matching: inv_skus={len(inv_skus)}, sku_with_vol={len(sku_with_vol)}, matched={len(matched_skus)}, inv_rows_with_vol={inv_with_volume}")
+        except Exception as e:
+            logger.warning(f"[relocation_start] Volume matching failed: {e}")
+    
     try:
         moves = _call_plan_relocation_compat(
             cfg=cfg,
@@ -2590,6 +2607,7 @@ def relocation_start(
             "inventory_level_dist": inv_df.get("level", pd.Series()).value_counts().to_dict() if not inv_df.empty and "level" in inv_df.columns else {},
             "sku_with_volume": int((sku_df["volume_m3"] > 0).sum()) if not sku_df.empty and "volume_m3" in sku_df.columns else 0,
             "sku_total": len(sku_df),
+            "inv_with_volume": inv_with_volume if 'inv_with_volume' in locals() else 0,
         }
     }
 
