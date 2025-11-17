@@ -20,8 +20,10 @@ export default function FileUploader({ endpoint }: { endpoint: string }) {
         const form = new FormData();
         form.append('file', files[0]);
 
-        // Next.js の rewrites を使うため、相対パスの endpoint をそのまま利用
-        const url = endpoint; // 例: "/v1/upload/sku"
+        // 本番環境では NEXT_PUBLIC_API_BASE を使用、開発環境では rewrites を利用
+        const apiBase = process.env.NEXT_PUBLIC_API_BASE || '';
+        const url = apiBase ? `${apiBase}${endpoint}` : endpoint;
+        
         const res = await fetch(url, { method: 'POST', body: form });
 
         let json: UploadSummary | null = null;
