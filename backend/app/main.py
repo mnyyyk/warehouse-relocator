@@ -51,6 +51,8 @@ _default_origins = [
     "http://0.0.0.0:3000",
     "http://localhost:3001",
     "http://127.0.0.1:3001",
+    "https://app.warehouse-optimizer.net",
+    "https://warehouse-optimizer.vercel.app",
 ]
 _env = os.getenv("FRONTEND_ORIGINS") or os.getenv("FRONTEND_ORIGIN") or ""
 _env_list = [o.strip() for o in _env.split(",") if o and o.strip()]
