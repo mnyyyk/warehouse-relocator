@@ -65,7 +65,6 @@ from app.services.metrics import recompute_all_sku_metrics
 from app.services.optimizer import (
     plan_relocation,
     OptimizerConfig,
-    get_last_relocation_debug,
     get_current_trace_id,
     sse_events,
     get_summary_report,
@@ -2593,10 +2592,8 @@ def relocation_last_debug(trace_id: Optional[str] = None):
     """
     # Rejection debug removed - all moves now accepted
     rej = {}
-    try:
-        rel = get_last_relocation_debug() or {}
-    except Exception:
-        rel = {}
+    # Relocation debug removed
+    rel = {}
     try:
         from app.services.optimizer import get_last_summary_report, get_summary_report
         if trace_id:
