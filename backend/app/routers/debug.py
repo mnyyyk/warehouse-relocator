@@ -1,6 +1,6 @@
 from __future__ import annotations
 from typing import Optional, List, Dict, Any
-from datetime import date
+from datetime import date, datetime
 import os
 
 from fastapi import APIRouter, Depends, Query, HTTPException
@@ -22,13 +22,11 @@ def get_session():
 
 
 @router.get("/version")
-def get_version():
-    """デプロイされているコードのバージョンを確認"""
-    import datetime
+def debug_version():
     return {
-        "version": "2025-11-18-fix-can-receive",
-        "timestamp": datetime.datetime.utcnow().isoformat(),
-        "msg": "Fixed: Handle empty can_receive filter in LocationMaster + added debug info"
+        "version": "2025-11-18-inv-volume-debug",
+        "timestamp": datetime.now().isoformat(),
+        "msg": "Debug: Added inventory-volume matching count to relocation response",
     }
 
 
