@@ -549,4 +549,54 @@ def relocation_candidates(
             "current_cases": float(m["current_cases"]) if m["current_cases"] is not None else 0.0,
         })
 
-    return {"rows": out, "count": len(out)}# Build: 20251110-233750
+    return {"rows": out, "count": len(out)}
+
+
+@router.get("/location_master_raw")
+def debug_location_master_raw(
+    block: Optional[str] = Query(None),
+    quality: Optional[str] = Query(None),
+    limit: int = Query(10, ge=1, le=100),
+    session: Session = Depends(get_session),
+):
+    """LocationMasterテーブルの実データを返す"""
+    try:
+        from app.routers.upload import LocationMaster
+        stmt = _sa_select(
+            LocationMaster.block_code,
+            LocationMaster.quality_name,
+            LocationMaster.level,
+            LocationMaster.column,
+            LocationMaster.depth,
+            LocationMaster.can_receive,
+            LocationMaster.numeric_id,
+            LocationMaster.display_code,
+        )
+        if block:
+            stmt = stmt.where(LocationMaster.block_code == block)
+        if quality:
+            stmt = stmt.where(LocationMaster.quality_name == quality)
+        stmt = stmt.limit(limit)
+        
+        rows = session.exec(stmt).all()
+        return {
+            "rows": [
+                {
+                    "block_code": r[0],
+                    "quality_name": r[1],
+                    "level": r[2],
+                    "column": r[3],
+                    "depth": r[4],
+                    "can_receive": r[5],
+                    "numeric_id": r[6],
+                    "display_code": r[7],
+                }
+                for r in rows
+            ],
+            "count": len(rows),
+        }
+    except Exception as e:
+        return {"error": str(e), "rows": [], "count": 0}
+
+
+# Build: 20251110-233750
