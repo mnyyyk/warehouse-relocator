@@ -8,10 +8,10 @@ export default function Topbar() {
   // ページごとのタイトルとバッジ
   const getPageInfo = () => {
     if (pathname === '/') return { title: 'ダッシュボード', badge: null };
-    if (pathname === '/upload') return { title: '取込', badge: 'PRODUCTION' };
+    if (pathname === '/upload') return { title: '取込', badge: null };
     if (pathname === '/analyze') return { title: '分析', badge: null };
     if (pathname === '/optimize') return { title: 'リロケーション', badge: null };
-    if (pathname === '/debug') return { title: 'DBビューア', badge: 'DEV' };
+    if (pathname === '/debug') return { title: 'DBビューア', badge: null };
     return { title: 'Warehouse Optimizer', badge: null };
   };
 
