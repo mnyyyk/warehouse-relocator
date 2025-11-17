@@ -2362,10 +2362,14 @@ def relocation_start(
     # Location master: destinations must be registered AND receivable
     if not location_master_df.empty:
         logger.info(f"[relocation_start] Before filter - LocationMaster: {len(location_master_df)} rows")
-        # 1) only receivable slots
+        # 1) only receivable slots - but if can_receive column doesn't exist or all False, skip this filter
         if "can_receive" in location_master_df.columns:
-            location_master_df = location_master_df[location_master_df["can_receive"] == True]
-            logger.info(f"[relocation_start] After can_receive filter: {len(location_master_df)} rows")
+            receivable_count = location_master_df["can_receive"].sum()
+            if receivable_count > 0:
+                location_master_df = location_master_df[location_master_df["can_receive"] == True]
+                logger.info(f"[relocation_start] After can_receive filter: {len(location_master_df)} rows")
+            else:
+                logger.warning(f"[relocation_start] No receivable locations found (can_receive all False), using all locations")
         # 2) restrict to requested blocks / qualities
         if _blocks and "block_code" in location_master_df.columns:
             location_master_df = location_master_df[location_master_df["block_code"].astype(str).isin(_blocks)]
@@ -2576,6 +2580,14 @@ def relocation_start(
         "quality_names": req.quality_names,
         "rotation_window_days": req.rotation_window_days,
         "summary": summary,
+        # Debug information
+        "_debug": {
+            "inventory_rows": len(inv_df),
+            "location_master_rows": len(location_master_df),
+            "sku_rows": len(sku_df),
+            "ship_rows": len(ship_df),
+            "recv_rows": len(recv_df),
+        }
     }
 
 
