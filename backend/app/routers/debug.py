@@ -562,7 +562,7 @@ def debug_location_master_raw(
     """LocationMasterテーブルの実データを返す"""
     try:
         from app.routers.upload import LocationMaster
-        stmt = _sa_select(
+        stmt = select(
             LocationMaster.block_code,
             LocationMaster.quality_name,
             LocationMaster.level,
