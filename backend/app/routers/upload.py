@@ -2648,7 +2648,6 @@ def _df_from_inventory(session: Session) -> pd.DataFrame:
             Inventory.lot,
             Inventory.lot_date,
             Inventory.qty,
-            Inventory.allocated_qty,
             Inventory.block_code,
             Inventory.cases,
             Inventory.quality_name,
@@ -2665,7 +2664,6 @@ def _df_from_inventory(session: Session) -> pd.DataFrame:
             "ロット",
             "lot_date",
             "在庫数(引当数を含む)",
-            "引当数",
             "ブロック略称",
             "cases",
             "品質区分名",
@@ -2680,7 +2678,6 @@ def _df_from_inventory(session: Session) -> pd.DataFrame:
             "ロット",
             "lot_date",
             "在庫数(引当数を含む)",
-            "引当数",
             "ブロック略称",
             "cases",
             "品質区分名",
@@ -2693,8 +2690,6 @@ def _df_from_inventory(session: Session) -> pd.DataFrame:
         return df
     # 型整形
     df["在庫数(引当数を含む)"] = pd.to_numeric(df["在庫数(引当数を含む)"], errors="coerce").fillna(0).astype(int)
-    if "引当数" in df.columns:
-        df["引当数"] = pd.to_numeric(df["引当数"], errors="coerce").fillna(0).astype(int)
     df["cases"] = pd.to_numeric(df["cases"], errors="coerce").fillna(0.0).astype(float)
     df["ロケーション"] = df["ロケーション"].astype(str)
     df["商品ID"] = df["商品ID"].astype(str)
