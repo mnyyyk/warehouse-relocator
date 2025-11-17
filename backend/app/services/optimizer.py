@@ -902,7 +902,16 @@ def plan_relocation(
 
     # --- lot key & 現在のロケ座標（後続の段ルールで使用）
     inv["lot_key"] = inv["ロット"].map(_parse_lot_date_key)
-    inv[["lv", "col", "dep"]] = inv["ロケーション"].apply(lambda s: pd.Series(_parse_loc8(str(s))))
+    
+    # level/column/depthカラムが既にあればそれを使用、なければロケーション文字列からパース
+    if "level" in inv.columns and "column" in inv.columns and "depth" in inv.columns:
+        inv["lv"] = pd.to_numeric(inv["level"], errors="coerce").fillna(0).astype(int)
+        inv["col"] = pd.to_numeric(inv["column"], errors="coerce").fillna(0).astype(int)
+        inv["dep"] = pd.to_numeric(inv["depth"], errors="coerce").fillna(0).astype(int)
+        print(f"[optimizer] using existing level/column/depth columns")
+    else:
+        inv[["lv", "col", "dep"]] = inv["ロケーション"].apply(lambda s: pd.Series(_parse_loc8(str(s))))
+        print(f"[optimizer] parsed lv/col/dep from location strings")
 
     # --- qty_cases（ベース: float）と、移動用の整数（ceil）
     if "cases" in inv.columns:
