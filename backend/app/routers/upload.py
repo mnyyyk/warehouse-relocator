@@ -2332,7 +2332,9 @@ def relocation_start(
             "block_code","quality_name","level","column","depth",
             "numeric_id","display_code","can_receive","highness","capacity_m3"
         ])
-    except Exception:
+        logger.info(f"[relocation_start] LocationMaster loaded: {len(location_master_df)} rows")
+    except Exception as e:
+        logger.error(f"[relocation_start] Failed to load LocationMaster: {e}")
         location_master_df = pd.DataFrame(columns=[
             "block_code","quality_name","level","column","depth",
             "numeric_id","display_code","can_receive","highness","capacity_m3"
@@ -2347,23 +2349,32 @@ def relocation_start(
 
     # Inventory: limit to selected blocks/qualities only (source population)
     if not inv_df.empty:
+        logger.info(f"[relocation_start] Before filter - Inventory: {len(inv_df)} rows")
         if _blocks and "ブロック略称" in inv_df.columns:
             inv_df = inv_df[inv_df["ブロック略称"].astype(str).isin(_blocks)]
+            logger.info(f"[relocation_start] After block filter: {len(inv_df)} rows")
         if _quals:
             qcol = "品質区分名" if "品質区分名" in inv_df.columns else ("quality_name" if "quality_name" in inv_df.columns else None)
             if qcol:
                 inv_df = inv_df[inv_df[qcol].astype(str).isin(_quals)]
+                logger.info(f"[relocation_start] After quality filter: {len(inv_df)} rows (column: {qcol})")
 
     # Location master: destinations must be registered AND receivable
     if not location_master_df.empty:
+        logger.info(f"[relocation_start] Before filter - LocationMaster: {len(location_master_df)} rows")
         # 1) only receivable slots
         if "can_receive" in location_master_df.columns:
             location_master_df = location_master_df[location_master_df["can_receive"] == True]
+            logger.info(f"[relocation_start] After can_receive filter: {len(location_master_df)} rows")
         # 2) restrict to requested blocks / qualities
         if _blocks and "block_code" in location_master_df.columns:
             location_master_df = location_master_df[location_master_df["block_code"].astype(str).isin(_blocks)]
+            logger.info(f"[relocation_start] After block filter {_blocks}: {len(location_master_df)} rows")
         if _quals and "quality_name" in location_master_df.columns:
             location_master_df = location_master_df[location_master_df["quality_name"].astype(str).isin(_quals)]
+            logger.info(f"[relocation_start] After quality filter {_quals}: {len(location_master_df)} rows")
+    else:
+        logger.warning("[relocation_start] LocationMaster DataFrame is EMPTY - no destination candidates!")
 
     # Optional: small log for sanity
     try:
