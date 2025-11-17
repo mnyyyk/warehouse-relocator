@@ -26,9 +26,9 @@ def get_version():
     """デプロイされているコードのバージョンを確認"""
     import datetime
     return {
-        "version": "2025-11-11-01:30",
+        "version": "2025-11-18-fix-can-receive",
         "timestamp": datetime.datetime.utcnow().isoformat(),
-        "msg": "Enhanced: detailed relocation reasons (old lot priority, pack band correction, AI hints, etc.)"
+        "msg": "Fixed: Handle empty can_receive filter in LocationMaster + added debug info"
     }
 
 
