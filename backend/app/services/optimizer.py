@@ -2,8 +2,14 @@ from __future__ import annotations
 
 import math
 import re
+import copy
+import asyncio
+import secrets
+import time
+import json
+from collections import deque
 from dataclasses import dataclass
-from typing import Iterable, List, Optional, Tuple, Dict, Set
+from typing import Iterable, List, Optional, Tuple, Dict, Set, Any
 
 import pandas as pd
 
@@ -18,6 +24,23 @@ UNKNOWN_LOT_KEY = 99_999_999
 
 # プレースホルダロケ（集約・仮置きなど）
 PLACEHOLDER_LOCS = {"00000000", "22222222"}
+
+# -------------------------------
+# Global state for debugging and SSE
+# -------------------------------
+_last_relocation_debug: Dict[str, Any] = {
+    "trace_id": None,
+    "planned": 0,
+    "accepted": 0,
+    "rejections": {},
+    "examples": {},
+}
+
+_CURRENT_TRACE_ID: Optional[str] = None
+_DROP_STORE: Dict[str, List[Dict[str, Any]]] = {}
+_TRACE_SUBS: Dict[str, List[asyncio.Queue[str]]] = {}
+_TRACE_BUFFER: Dict[str, deque[str]] = {}
+_TRACE_BUFFER_MAX = 200
 
 
 # -------------------------------
@@ -1400,6 +1423,50 @@ def get_summary_report(trace_id: str) -> Optional[str]:
     return _TRACE_SUMMARY_REPORTS.get(trace_id)
 
 
+# -------------------------------
+# Additional debug/trace functions
+# -------------------------------
+def get_last_rejection_debug() -> Dict[str, Any]:
+    """Return a deep copy of the last relocation rejection breakdown."""
+    return copy.deepcopy(_last_relocation_debug)
+
+
+def get_last_relocation_debug() -> Dict[str, Any]:
+    """Alias for get_last_rejection_debug."""
+    return get_last_rejection_debug()
+
+
+def get_current_trace_id() -> Optional[str]:
+    """Return the currently bound trace ID."""
+    global _CURRENT_TRACE_ID
+    return _CURRENT_TRACE_ID
+
+
+async def sse_events(trace_id: str):
+    """Async generator for Server-Sent Events of a given trace id."""
+    tid = str(trace_id)
+    q: asyncio.Queue[str] = asyncio.Queue(maxsize=1000)
+    subs = _TRACE_SUBS.setdefault(tid, [])
+    subs.append(q)
+    # send buffered history first
+    try:
+        for item in list(_TRACE_BUFFER.get(tid) or []):
+            yield f"data: {item}\n\n"
+    except Exception:
+        pass
+    try:
+        while True:
+            item = await q.get()
+            yield f"data: {item}\n\n"
+    except asyncio.CancelledError:
+        pass
+    finally:
+        try:
+            subs.remove(q)
+        except Exception:
+            pass
+
+
 __all__ = [
     "Move",
     "OptimizerConfig",
@@ -1409,4 +1476,8 @@ __all__ = [
     "get_last_summary_report",
     "get_summary_report",
     "set_summary_report",
+    "get_last_rejection_debug",
+    "get_last_relocation_debug",
+    "get_current_trace_id",
+    "sse_events",
 ]
