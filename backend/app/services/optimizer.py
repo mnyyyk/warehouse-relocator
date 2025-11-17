@@ -831,6 +831,7 @@ def plan_relocation(
     block_filter: Iterable[str] | None = None,
     quality_filter: Iterable[str] | None = None,
     ai_col_hints: dict[str, list[int]] | None = None,
+    loc_master: pd.DataFrame | None = None,
 ) -> List[Move]:
     """
     Greedy 手法でリロケーション案を作成して返す。
@@ -887,6 +888,7 @@ def plan_relocation(
 
     # プレースホルダロケは移動元として扱わない
     inv = inv[~inv["ロケーション"].astype(str).isin(PLACEHOLDER_LOCS)].copy()
+    print(f"[optimizer] after placeholder exclusion rows={len(inv)}")
 
     # --- SKU 段ボール容積マップ（m³/ケース）
     sku_vol_map = _build_carton_volume_map(sku_master)
@@ -1001,6 +1003,24 @@ def plan_relocation(
     # --- 棚毎の使用量 (m³)
     shelf_usage = inv.groupby("ロケーション")["volume_total"].sum().to_dict()
     print(f"[optimizer] shelf_usage locations={len(shelf_usage)} (cap={cap_limit})")
+
+    # --- LocationMaster から全ての受け入れ可能なロケーションを候補に追加
+    all_locations = set(shelf_usage.keys())
+    if loc_master is not None and not loc_master.empty:
+        try:
+            # numeric_id または display_code から 8桁ロケーションIDを取得
+            if "numeric_id" in loc_master.columns:
+                loc_ids = loc_master["numeric_id"].dropna().astype(str)
+                all_locations.update(loc_ids)
+            # 空のロケーションは使用量0として初期化
+            for loc_id in all_locations:
+                if loc_id not in shelf_usage:
+                    shelf_usage[loc_id] = 0.0
+            print(f"[optimizer] after LocationMaster: total candidate locations={len(all_locations)}")
+        except Exception as e:
+            print(f"[optimizer] Failed to process loc_master: {e}")
+    else:
+        print(f"[optimizer] WARNING: loc_master not provided or empty - using only existing inventory locations")
 
     # --- Pass-1: ブロッカー退避（同列内で新しいロットが低段にいる違反を解消）
     moves: List[Move] = []
