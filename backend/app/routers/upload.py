@@ -2588,6 +2588,8 @@ def relocation_start(
             "ship_rows": len(ship_df),
             "recv_rows": len(recv_df),
             "inventory_level_dist": inv_df.get("level", pd.Series()).value_counts().to_dict() if not inv_df.empty and "level" in inv_df.columns else {},
+            "sku_with_volume": int((sku_df["volume_m3"] > 0).sum()) if not sku_df.empty and "volume_m3" in sku_df.columns else 0,
+            "sku_total": len(sku_df),
         }
     }
 

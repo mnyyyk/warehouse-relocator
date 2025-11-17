@@ -1007,7 +1007,10 @@ def plan_relocation(
     mix_slots_left: dict[int, int] = {c: int(getattr(cfg, "mix_slots_per_col", 1)) for c in unique_cols}
 
     # 容積情報が無い行はスキップ
+    before_volume_filter = len(inv)
     inv = inv[inv["volume_each_case"] > 0].copy()
+    after_volume_filter = len(inv)
+    print(f"[optimizer] after volume filter: {after_volume_filter} rows (removed {before_volume_filter - after_volume_filter} rows with volume=0)")
 
     # --- 棚毎の使用量 (m³)
     shelf_usage = inv.groupby("ロケーション")["volume_total"].sum().to_dict()
