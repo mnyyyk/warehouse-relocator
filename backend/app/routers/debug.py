@@ -1,6 +1,6 @@
 from __future__ import annotations
 from typing import Optional, List, Dict, Any
-from datetime import date, datetime
+from datetime import date
 import os
 
 from fastapi import APIRouter, Depends, Query, HTTPException
@@ -21,20 +21,11 @@ def get_session():
         yield s
 
 
-@router.get("/version")
-def debug_version():
-    return {
-        "version": "2025-11-18-inv-volume-debug",
-        "timestamp": datetime.now().isoformat(),
-        "msg": "Debug: Added inventory-volume matching count to relocation response",
-    }
-
-
 # ----------------------------- SKU -------------------------------------
 @router.get("/sku")
 def list_sku(
     q: Optional[str] = Query(None, description="部分一致検索: sku_id"),
-    limit: int = Query(50, ge=1, le=500),
+    limit: int = Query(50, ge=1, le=10000),
     offset: int = Query(0, ge=0),
     session: Session = Depends(get_session),
 ):
@@ -55,7 +46,7 @@ def list_inventory(
     sku_id: Optional[str] = Query(None),
     location_like: Optional[str] = Query(None),
     lot_like: Optional[str] = Query(None),
-    limit: int = Query(50, ge=1, le=500),
+    limit: int = Query(50, ge=1, le=10000),
     offset: int = Query(0, ge=0),
     session: Session = Depends(get_session),
 ):
@@ -105,7 +96,7 @@ def list_recv_tx(
     sku_id: Optional[str] = Query(None),
     start: Optional[date] = Query(None, description="開始日"),
     end: Optional[date] = Query(None, description="終了日(含む)"),
-    limit: int = Query(50, ge=1, le=500),
+    limit: int = Query(50, ge=1, le=10000),
     offset: int = Query(0, ge=0),
     session: Session = Depends(get_session),
 ):
@@ -134,7 +125,7 @@ def list_ship_tx(
     sku_id: Optional[str] = Query(None),
     start: Optional[date] = Query(None),
     end: Optional[date] = Query(None),
-    limit: int = Query(50, ge=1, le=500),
+    limit: int = Query(50, ge=1, le=10000),
     offset: int = Query(0, ge=0),
     session: Session = Depends(get_session),
 ):
@@ -308,7 +299,7 @@ def list_sku_metrics(
     sku_id: Optional[str] = Query(None, description="部分一致検索: sku_id"),
     sort: str = Query("cases_per_day", description="ソートキー"),
     order: str = Query("desc", description="asc/desc"),
-    limit: int = Query(50, ge=1, le=500),
+    limit: int = Query(50, ge=1, le=10000),
     offset: int = Query(0, ge=0),
     session: Session = Depends(get_session),
 ):
@@ -318,6 +309,27 @@ def list_sku_metrics(
     - sort はホワイトリストでカラム固定（SQLインジェクション対策）
     - order は asc/desc
     """
+    # Check if sku_metrics table exists
+    try:
+        check_sql = "SELECT name FROM sqlite_master WHERE type='table' AND name='sku_metrics'"
+        result = session.exec(text(check_sql)).first()
+        if not result:
+            raise HTTPException(
+                status_code=404,
+                detail="sku_metrics テーブルが存在しません。先に「分析」ページで分析を実行してください。"
+            )
+    except HTTPException:
+        raise
+    except Exception as e:
+        # For non-SQLite databases, try a different approach
+        try:
+            session.exec(text("SELECT 1 FROM sku_metrics LIMIT 1"))
+        except Exception:
+            raise HTTPException(
+                status_code=404,
+                detail="sku_metrics テーブルが存在しません。先に「分析」ページで分析を実行してください。"
+            )
+    
     # --- ソート列をホワイトリスト化
     ALLOWED_SORTS = {
         "sku_id": "sku_id",
@@ -361,7 +373,6 @@ def list_sku_metrics(
         order_clause = f"{sort_col} {order_kw} NULLS LAST"
     select_cols = (
         "sku_id, "
-        "window_days, "
         "shipped_cases_all, "
         "current_cases, "
         "turnover_rate, "
@@ -394,7 +405,6 @@ def list_sku_metrics(
             continue
         out.append({
             "sku_id": str(m["sku_id"]),
-            "window_days": int(m["window_days"]) if m.get("window_days") is not None else None,
             "shipped_cases_all": float(m["shipped_cases_all"]) if m["shipped_cases_all"] is not None else 0,
             "current_cases": float(m["current_cases"]) if m["current_cases"] is not None else 0,
             "turnover_rate": float(m["turnover_rate"]) if m["turnover_rate"] is not None else 0,
@@ -548,53 +558,3 @@ def relocation_candidates(
         })
 
     return {"rows": out, "count": len(out)}
-
-
-@router.get("/location_master_raw")
-def debug_location_master_raw(
-    block: Optional[str] = Query(None),
-    quality: Optional[str] = Query(None),
-    limit: int = Query(10, ge=1, le=100),
-    session: Session = Depends(get_session),
-):
-    """LocationMasterテーブルの実データを返す"""
-    try:
-        from app.routers.upload import LocationMaster
-        stmt = select(
-            LocationMaster.block_code,
-            LocationMaster.quality_name,
-            LocationMaster.level,
-            LocationMaster.column,
-            LocationMaster.depth,
-            LocationMaster.can_receive,
-            LocationMaster.numeric_id,
-            LocationMaster.display_code,
-        )
-        if block:
-            stmt = stmt.where(LocationMaster.block_code == block)
-        if quality:
-            stmt = stmt.where(LocationMaster.quality_name == quality)
-        stmt = stmt.limit(limit)
-        
-        rows = session.exec(stmt).all()
-        return {
-            "rows": [
-                {
-                    "block_code": r[0],
-                    "quality_name": r[1],
-                    "level": r[2],
-                    "column": r[3],
-                    "depth": r[4],
-                    "can_receive": r[5],
-                    "numeric_id": r[6],
-                    "display_code": r[7],
-                }
-                for r in rows
-            ],
-            "count": len(rows),
-        }
-    except Exception as e:
-        return {"error": str(e), "rows": [], "count": 0}
-
-
-# Build: 20251110-233750
