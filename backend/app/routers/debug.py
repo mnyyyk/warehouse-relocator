@@ -309,26 +309,15 @@ def list_sku_metrics(
     - sort はホワイトリストでカラム固定（SQLインジェクション対策）
     - order は asc/desc
     """
-    # Check if sku_metrics table exists
+    # Check if sku_metrics table exists (PostgreSQL and SQLite compatible)
     try:
-        check_sql = "SELECT name FROM sqlite_master WHERE type='table' AND name='sku_metrics'"
-        result = session.exec(text(check_sql)).first()
-        if not result:
-            raise HTTPException(
-                status_code=404,
-                detail="sku_metrics テーブルが存在しません。先に「分析」ページで分析を実行してください。"
-            )
-    except HTTPException:
-        raise
-    except Exception as e:
-        # For non-SQLite databases, try a different approach
-        try:
-            session.exec(text("SELECT 1 FROM sku_metrics LIMIT 1"))
-        except Exception:
-            raise HTTPException(
-                status_code=404,
-                detail="sku_metrics テーブルが存在しません。先に「分析」ページで分析を実行してください。"
-            )
+        # Try to query the table directly - works for both PostgreSQL and SQLite
+        session.exec(text("SELECT 1 FROM sku_metrics LIMIT 1"))
+    except Exception:
+        raise HTTPException(
+            status_code=404,
+            detail="sku_metrics テーブルが存在しません。先に「分析」ページで分析を実行してください。"
+        )
     
     # --- ソート列をホワイトリスト化
     ALLOWED_SORTS = {
