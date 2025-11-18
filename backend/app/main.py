@@ -51,8 +51,6 @@ _default_origins = [
     "http://0.0.0.0:3000",
     "http://localhost:3001",
     "http://127.0.0.1:3001",
-    "https://app.warehouse-optimizer.net",
-    "https://warehouse-optimizer.vercel.app",
 ]
 _env = os.getenv("FRONTEND_ORIGINS") or os.getenv("FRONTEND_ORIGIN") or ""
 _env_list = [o.strip() for o in _env.split(",") if o and o.strip()]
@@ -61,7 +59,7 @@ origins = sorted(set(_default_origins + _env_list))
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
-    allow_origin_regex=r"^http://(localhost|127\.0\.0\.1|0\.0\.0\.0)(:\d+)?$",
+    allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1|0\.0\.0\.0|[^/]+\.vercel\.app|[^/]+\.warehouse-optimizer\.net)(:\d+)?$",
     allow_credentials=False,   # Cookie 認証が必要なら True に
     allow_methods=["*"],      # OPTIONS を含む全メソッド
     allow_headers=["*"],      # Content-Type など全許可
