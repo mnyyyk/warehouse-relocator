@@ -20,7 +20,7 @@ from typing import Any, Dict, List, Optional, Literal, Generator
 from decimal import Decimal, ROUND_HALF_UP
 
 import pandas as pd
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, Query, Request
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, Query
 from fastapi.responses import StreamingResponse
 from sqlmodel import Session, SQLModel
 
@@ -65,8 +65,6 @@ from app.services.metrics import recompute_all_sku_metrics
 from app.services.optimizer import (
     plan_relocation,
     OptimizerConfig,
-    get_summary_report,
-    get_last_summary_report,
     get_last_rejection_debug,
     get_last_relocation_debug,
     get_current_trace_id,
@@ -229,15 +227,11 @@ logger = logging.getLogger(__name__)
 ERROR_DIR = Path("/tmp/upload_errors")
 ERROR_DIR.mkdir(parents=True, exist_ok=True)
 
-def _save_error_csv(errors: list[dict], base_url: str = "") -> str:
+def _save_error_csv(errors: list[dict]) -> str:
     """
     Save a list of {'row': int, 'message': str} dicts as CSV and
-    return the full URL (e.g. ``https://api.example.com/files/err_<uuid>.csv``).
+    return the relative URL (e.g. ``/files/err_<uuid>.csv``).
     The FastAPI app must mount ``StaticFiles`` at ``/files`` separately.
-    
-    Args:
-        errors: List of error dictionaries
-        base_url: Base URL of the API (e.g., "https://api.warehouse-optimizer.net")
     """
     if not errors:
         return ""
@@ -245,17 +239,6 @@ def _save_error_csv(errors: list[dict], base_url: str = "") -> str:
     fname = f"err_{uuid4().hex}.csv"
     fpath = ERROR_DIR / fname
     df.to_csv(fpath, index=False, encoding="utf-8-sig")
-    logger.info("Saved error CSV: %s (%d errors)", fpath, len(errors))
-    # Verify file was created
-    if fpath.exists():
-        logger.info("Error CSV file exists, size: %d bytes", fpath.stat().st_size)
-    else:
-        logger.error("Error CSV file was NOT created at %s", fpath)
-    
-    # Force HTTPS for production (App Runner terminates SSL at load balancer)
-    if base_url:
-        base_url = base_url.replace("http://", "https://")
-        return f"{base_url.rstrip('/')}/files/{fname}"
     return f"/files/{fname}"
 
 # --------------------------------------------------------------------------- #
@@ -485,6 +468,12 @@ def _generic_insert(
                 # pack が不明/0 の異常系は 0 として扱う（後続の最適化ではスキップ対象）
                 obj.cases = 0.0
 
+            # DEBUG: Verify quality_name is preserved
+            if hasattr(obj, 'quality_name'):
+                import random
+                if random.random() < 0.001:  # Log ~0.1% of objects
+                    logger.debug(f"[_generic_insert/Inventory] sku={obj.sku_id}, quality_name={obj.quality_name!r}")
+
             filtered.append(obj)
         objects = filtered
 
@@ -524,6 +513,12 @@ def _generic_insert(
 
         # Convert to plain dict and **remove** autoincrement PK columns that are None
         data = obj.model_dump()
+        
+        # DEBUG: Check if quality_name is in model_dump output
+        import random
+        if model is Inventory and random.random() < 0.001:
+            logger.debug(f"[dedup] model_dump quality_name={data.get('quality_name')!r}, real_cols has quality_name={'quality_name' in real_cols}")
+        
         for pk in pk_cols:
             if data.get(pk) is None:
                 data.pop(pk, None)
@@ -919,12 +914,7 @@ def _col(row: pd.Series, *candidates: str):  # noqa: D401
         if hit is not None:
             return row[hit]
 
-    # Enhanced error message with actual CSV headers for debugging
-    actual_headers = list(row.index)[:10]  # Show first 10 columns
-    raise KeyError(
-        f"None of {candidates!r} found in CSV header. "
-        f"Actual headers (first 10): {actual_headers!r}"
-    )
+    raise KeyError(f"None of {candidates!r} found in CSV header")
 
 def _opt_col(row: pd.Series, *candidates: str):
     """Best-effort column getter.
@@ -1090,7 +1080,6 @@ def _sku_mapper(row: pd.Series) -> Sku:
         "item_internalid",  # ← 入荷CSVと同じIDを最優先で採用
         "商品ID",
         "商品ＩＤ",
-        "商品コード",  # 追加: よくある別名
         "商品IDコード",
         "SKU",
         "sku",
@@ -1148,10 +1137,13 @@ def _inventory_mapper(row: pd.Series) -> Inventory:
         lot_val = "UNKNOWN"
 
     # 品質区分名（列が無い場合は None にフォールバック）
-    try:
-        quality = _col(row, "品質区分", "品質区分名", "quality_name", "品質", "quality")
-    except KeyError:
-        quality = None
+    # 複数の列名候補を試行（品質区分名、品質区分、quality_name等）
+    quality = _opt_col(row, "品質区分名", "品質区分", "品質", "quality_name", "quality")
+    
+    # DEBUG: Log first few rows to verify quality_name is being read
+    import random
+    if random.random() < 0.001:  # Log ~0.1% of rows
+        logger.debug(f"[inventory_mapper] sku={sku_norm}, quality_name={quality!r}, available_cols={list(row.index)[:10]}")
 
     # ケース数は任意列。存在すればそのまま採用、無ければ後段で補完。
     try:
@@ -1871,7 +1863,7 @@ def _truncate_tables(
 
 
 @router.post("/sku")
-async def upload_sku(file: UploadDep, ses: SesDep, request: Request):
+async def upload_sku(file: UploadDep, ses: SesDep):
     """Upload SKU master (置き換えモード・常時)。
 
     アップロードのたびに `sku` テーブルを **TRUNCATE RESTART IDENTITY CASCADE** し、
@@ -1881,10 +1873,6 @@ async def upload_sku(file: UploadDep, ses: SesDep, request: Request):
     try:
         from time import perf_counter
         t0 = perf_counter()
-        
-        # Get base URL from request
-        base_url = str(request.base_url).rstrip('/')
-        
         try:
             logger.info(
                 "upload_sku: start filename=%s content_type=%s",
@@ -1923,15 +1911,9 @@ async def upload_sku(file: UploadDep, ses: SesDep, request: Request):
             pass
         # attach error CSV url if any
         if summary["error_rows"] > 0:
-            summary["error_csv_url"] = _save_error_csv(summary["errors"], base_url)
-            # Include first few errors in response for debugging
-            summary["sample_errors"] = summary["errors"][:5] if len(summary["errors"]) > 0 else []
+            summary["error_csv_url"] = _save_error_csv(summary["errors"])
         else:
             summary["error_csv_url"] = None
-            summary["sample_errors"] = []
-        # Add CSV header info for debugging
-        summary["csv_headers"] = list(df.columns)
-        summary["csv_sample_row"] = df.head(1).to_dict(orient="records")[0] if len(df) > 0 else {}
         return summary
     except ValueError as e:
         logger.exception("sku upload failed: invalid file")
@@ -1942,15 +1924,32 @@ async def upload_sku(file: UploadDep, ses: SesDep, request: Request):
 
 
 @router.post("/inventory")
-async def upload_inventory(file: UploadDep, ses: SesDep, request: Request):
+async def upload_inventory(file: UploadDep, ses: SesDep):
     try:
-        base_url = str(request.base_url).rstrip('/')
         # 1) ファイルを先に検証・読込
         df = read_dataframe(file)
+        
+        # DEBUG: Log CSV columns and sample data
+        logger.info(f"[inventory upload] CSV columns: {df.columns.tolist()}")
+        logger.info(f"[inventory upload] Total rows: {len(df)}")
+        if len(df) > 0:
+            quality_col_candidates = [c for c in df.columns if '品質' in c or 'quality' in c.lower()]
+            logger.info(f"[inventory upload] Quality-related columns: {quality_col_candidates}")
+            if quality_col_candidates:
+                sample_quality = df.iloc[0][quality_col_candidates[0]] if quality_col_candidates else None
+                logger.info(f"[inventory upload] First row quality value: {sample_quality!r}")
+        
         # 2) 置き換え
         _truncate_tables(ses, ["inventory"], restart_identity=True)
         # 3) 挿入
         summary = _generic_insert(df, Inventory, _inventory_mapper, ses, use_upsert=True)
+        
+        # DEBUG: Check quality_name after insert
+        from sqlmodel import select
+        inv_sample = ses.exec(select(Inventory).limit(10)).all()
+        quality_count = len([i for i in inv_sample if i.quality_name is not None])
+        logger.info(f"[inventory upload] After insert: {quality_count}/{len(inv_sample)} sample rows have quality_name")
+        
         # Backfill/derive lot_date column from lot text（SQLiteでは失敗しても無害に握りつぶす）
         try:
             updated_cnt = _update_inventory_lot_dates(ses)
@@ -1960,7 +1959,7 @@ async def upload_inventory(file: UploadDep, ses: SesDep, request: Request):
             summary["lot_date_updated_rows"] = 0
         # attach error CSV url if any
         if summary["error_rows"] > 0:
-            summary["error_csv_url"] = _save_error_csv(summary["errors"], base_url)
+            summary["error_csv_url"] = _save_error_csv(summary["errors"])
         else:
             summary["error_csv_url"] = None
         return summary
@@ -1973,9 +1972,8 @@ async def upload_inventory(file: UploadDep, ses: SesDep, request: Request):
 
 
 @router.post("/ship_tx")
-async def upload_ship_tx(file: UploadDep, ses: SesDep, request: Request):
+async def upload_ship_tx(file: UploadDep, ses: SesDep):
     try:
-        base_url = str(request.base_url).rstrip('/')
         # 1) ファイル検証
         df = read_dataframe(file)
         # 2) 置き換え
@@ -1984,7 +1982,7 @@ async def upload_ship_tx(file: UploadDep, ses: SesDep, request: Request):
         summary = _generic_insert(df, ShipTx, _ship_mapper, ses, use_upsert=False)
         # attach error CSV url if any
         if summary["error_rows"] > 0:
-            summary["error_csv_url"] = _save_error_csv(summary["errors"], base_url)
+            summary["error_csv_url"] = _save_error_csv(summary["errors"])
         else:
             summary["error_csv_url"] = None
         return summary
@@ -1998,9 +1996,8 @@ async def upload_ship_tx(file: UploadDep, ses: SesDep, request: Request):
 
 
 @router.post("/recv_tx")
-async def upload_recv_tx(file: UploadDep, ses: SesDep, request: Request):
+async def upload_recv_tx(file: UploadDep, ses: SesDep):
     try:
-        base_url = str(request.base_url).rstrip('/')
         # 1) ファイル検証
         df = read_dataframe(file)
         # 2) 置き換え
@@ -2009,7 +2006,7 @@ async def upload_recv_tx(file: UploadDep, ses: SesDep, request: Request):
         summary = _generic_insert(df, RecvTx, _recv_mapper, ses, use_upsert=False)
         # attach error CSV url if any
         if summary["error_rows"] > 0:
-            summary["error_csv_url"] = _save_error_csv(summary["errors"], base_url)
+            summary["error_csv_url"] = _save_error_csv(summary["errors"])
         else:
             summary["error_csv_url"] = None
         return summary
@@ -2105,14 +2102,13 @@ class AnalysisStartRequest(BaseModel):
 
 @router.post("/analysis/start")
 def analysis_start(req: AnalysisStartRequest, session: Session = Depends(get_session)):
+    # Accept both window_days and rotation_window_days
+    wd_in = req.window_days if req.window_days is not None else req.rotation_window_days
+    wd = int(wd_in or 0)
+    if wd <= 0:
+        wd = 99_999  # 全期間扱い
+    
     try:
-        # Accept both window_days and rotation_window_days
-        wd_in = req.window_days if req.window_days is not None else req.rotation_window_days
-        logger.info(f"analysis_start: window_days={req.window_days}, rotation_window_days={req.rotation_window_days}, wd_in={wd_in}")
-        wd = int(wd_in or 0)
-        if wd <= 0:
-            wd = 99_999  # 全期間扱い
-        logger.info(f"analysis_start: effective window_days={wd}")
         updated = recompute_all_sku_metrics(
             session,
             turnover_window_days=wd,
@@ -2127,9 +2123,10 @@ def analysis_start(req: AnalysisStartRequest, session: Session = Depends(get_ses
             "quality_names": list(req.quality_names or []),
         }
     except Exception as e:
-        logger.exception("analysis_start failed")
-        raise HTTPException(status_code=500, detail=f"Analysis failed: {str(e)}")
-
+        import traceback
+        error_detail = traceback.format_exc()
+        print(f"[analysis_start] Error: {error_detail}")
+        raise HTTPException(status_code=500, detail=f"分析計算エラー: {str(e)}")
 
 
 #
@@ -2332,9 +2329,7 @@ def relocation_start(
             "block_code","quality_name","level","column","depth",
             "numeric_id","display_code","can_receive","highness","capacity_m3"
         ])
-        logger.info(f"[relocation_start] LocationMaster loaded: {len(location_master_df)} rows")
-    except Exception as e:
-        logger.error(f"[relocation_start] Failed to load LocationMaster: {e}")
+    except Exception:
         location_master_df = pd.DataFrame(columns=[
             "block_code","quality_name","level","column","depth",
             "numeric_id","display_code","can_receive","highness","capacity_m3"
@@ -2349,36 +2344,23 @@ def relocation_start(
 
     # Inventory: limit to selected blocks/qualities only (source population)
     if not inv_df.empty:
-        logger.info(f"[relocation_start] Before filter - Inventory: {len(inv_df)} rows")
         if _blocks and "ブロック略称" in inv_df.columns:
             inv_df = inv_df[inv_df["ブロック略称"].astype(str).isin(_blocks)]
-            logger.info(f"[relocation_start] After block filter: {len(inv_df)} rows")
         if _quals:
             qcol = "品質区分名" if "品質区分名" in inv_df.columns else ("quality_name" if "quality_name" in inv_df.columns else None)
             if qcol:
                 inv_df = inv_df[inv_df[qcol].astype(str).isin(_quals)]
-                logger.info(f"[relocation_start] After quality filter: {len(inv_df)} rows (column: {qcol})")
 
     # Location master: destinations must be registered AND receivable
     if not location_master_df.empty:
-        logger.info(f"[relocation_start] Before filter - LocationMaster: {len(location_master_df)} rows")
-        # 1) only receivable slots - but if can_receive column doesn't exist or all False, skip this filter
+        # 1) only receivable slots
         if "can_receive" in location_master_df.columns:
-            receivable_count = location_master_df["can_receive"].sum()
-            if receivable_count > 0:
-                location_master_df = location_master_df[location_master_df["can_receive"] == True]
-                logger.info(f"[relocation_start] After can_receive filter: {len(location_master_df)} rows")
-            else:
-                logger.warning(f"[relocation_start] No receivable locations found (can_receive all False), using all locations")
+            location_master_df = location_master_df[location_master_df["can_receive"] == True]
         # 2) restrict to requested blocks / qualities
         if _blocks and "block_code" in location_master_df.columns:
             location_master_df = location_master_df[location_master_df["block_code"].astype(str).isin(_blocks)]
-            logger.info(f"[relocation_start] After block filter {_blocks}: {len(location_master_df)} rows")
         if _quals and "quality_name" in location_master_df.columns:
             location_master_df = location_master_df[location_master_df["quality_name"].astype(str).isin(_quals)]
-            logger.info(f"[relocation_start] After quality filter {_quals}: {len(location_master_df)} rows")
-    else:
-        logger.warning("[relocation_start] LocationMaster DataFrame is EMPTY - no destination candidates!")
 
     # Optional: small log for sanity
     try:
@@ -2395,23 +2377,6 @@ def relocation_start(
 
     # Call optimizer with signature-agnostic shim; if it fails, fall back to
     # a direct call using the current optimizer signature.
-    
-    # Debug: SKUマスターとのマッチング状況を確認
-    inv_with_volume = 0
-    if not inv_df.empty and not sku_df.empty:
-        try:
-            # SKUマスターのvolume情報を持つSKUリスト
-            sku_with_vol = set(sku_df[sku_df["volume_m3"] > 0]["商品ID"].astype(str))
-            # 在庫データのSKU
-            inv_skus = set(inv_df["商品ID"].astype(str))
-            # マッチするSKU
-            matched_skus = inv_skus & sku_with_vol
-            # マッチするSKUの在庫行数
-            inv_with_volume = len(inv_df[inv_df["商品ID"].astype(str).isin(matched_skus)])
-            logger.info(f"[relocation_start] Volume matching: inv_skus={len(inv_skus)}, sku_with_vol={len(sku_with_vol)}, matched={len(matched_skus)}, inv_rows_with_vol={inv_with_volume}")
-        except Exception as e:
-            logger.warning(f"[relocation_start] Volume matching failed: {e}")
-    
     try:
         moves = _call_plan_relocation_compat(
             cfg=cfg,
@@ -2597,18 +2562,6 @@ def relocation_start(
         "quality_names": req.quality_names,
         "rotation_window_days": req.rotation_window_days,
         "summary": summary,
-        # Debug information
-        "_debug": {
-            "inventory_rows": len(inv_df),
-            "location_master_rows": len(location_master_df),
-            "sku_rows": len(sku_df),
-            "ship_rows": len(ship_df),
-            "recv_rows": len(recv_df),
-            "inventory_level_dist": inv_df.get("level", pd.Series()).value_counts().to_dict() if not inv_df.empty and "level" in inv_df.columns else {},
-            "sku_with_volume": int((sku_df["volume_m3"] > 0).sum()) if not sku_df.empty and "volume_m3" in sku_df.columns else 0,
-            "sku_total": len(sku_df),
-            "inv_with_volume": inv_with_volume if 'inv_with_volume' in locals() else 0,
-        }
     }
 
 
@@ -2621,8 +2574,16 @@ async def relocation_progress_stream(trace_id: str | None = Query(None, descript
 
     If trace_id is omitted, the currently active trace (if any) will be used.
     """
-    # SSE events feature temporarily disabled - return empty stream
-    return StreamingResponse(iter(()), media_type="text/event-stream")
+    tid = trace_id or (get_current_trace_id() or "")
+    if not tid:
+        # Return an empty stream that closes immediately
+        return StreamingResponse(iter(()), media_type="text/event-stream")
+    gen = sse_events(str(tid))
+    headers = {
+        "Cache-Control": "no-cache",
+        "X-Accel-Buffering": "no",  # disable proxy buffering (nginx)
+    }
+    return StreamingResponse(gen, media_type="text/event-stream", headers=headers)
 
 
 # ---------------------------------------------------------------------------
@@ -2692,6 +2653,7 @@ def _df_from_inventory(session: Session) -> pd.DataFrame:
             Inventory.lot,
             Inventory.lot_date,
             Inventory.qty,
+            Inventory.allocated_qty,
             Inventory.block_code,
             Inventory.cases,
             Inventory.quality_name,
@@ -2708,6 +2670,7 @@ def _df_from_inventory(session: Session) -> pd.DataFrame:
             "ロット",
             "lot_date",
             "在庫数(引当数を含む)",
+            "引当数",
             "ブロック略称",
             "cases",
             "品質区分名",
@@ -2722,6 +2685,7 @@ def _df_from_inventory(session: Session) -> pd.DataFrame:
             "ロット",
             "lot_date",
             "在庫数(引当数を含む)",
+            "引当数",
             "ブロック略称",
             "cases",
             "品質区分名",
@@ -2734,6 +2698,8 @@ def _df_from_inventory(session: Session) -> pd.DataFrame:
         return df
     # 型整形
     df["在庫数(引当数を含む)"] = pd.to_numeric(df["在庫数(引当数を含む)"], errors="coerce").fillna(0).astype(int)
+    if "引当数" in df.columns:
+        df["引当数"] = pd.to_numeric(df["引当数"], errors="coerce").fillna(0).astype(int)
     df["cases"] = pd.to_numeric(df["cases"], errors="coerce").fillna(0.0).astype(float)
     df["ロケーション"] = df["ロケーション"].astype(str)
     df["商品ID"] = df["商品ID"].astype(str)
