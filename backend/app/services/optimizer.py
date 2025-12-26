@@ -630,9 +630,10 @@ class OptimizerConfig:
     enable_pass3_ai_optimize: bool = True  # AI最適化Passを有効化（デフォルト有効）
 
     # 入数帯ごとの列レンジ（エリア分け）
-    small_pack_cols: tuple[int, ...] = tuple(range(35, 42))   # ≤pack_low_max（重い）
-    medium_pack_cols: tuple[int, ...] = tuple(range(12, 35))  # 中間帯
-    large_pack_cols: tuple[int, ...] = tuple(range(1, 12))    # ≥pack_high_min・販促
+    # 1～11: 遠距離、12～23と35～41: 中距離、24～34: 近距離
+    small_pack_cols: tuple[int, ...] = tuple(range(24, 35))   # 近距離（24～34列）
+    medium_pack_cols: tuple[int, ...] = tuple(list(range(12, 24)) + list(range(35, 42)))  # 中距離（12～23 + 35～41列）
+    large_pack_cols: tuple[int, ...] = tuple(range(1, 12))    # 遠距離（1～11列）
 
     # エリアをハード適用するか（ミックス枠で例外許容）
     strict_pack_area: bool = True
@@ -1403,6 +1404,239 @@ def _violates_lot_level_rule(
     return False
 
 
+# ============================================================================
+# Pass-FIFO: 列を跨いだFIFO最適化（同一SKU内で最古ロットを最優先引き当て位置へ）
+# ============================================================================
+def _pass_fifo_cross_column(
+    inv: pd.DataFrame,
+    shelf_usage: dict[str, float],
+    cap_limit: float,
+    cfg: OptimizerConfig,
+    cap_by_loc: Optional[Dict[str, float]] = None,
+    can_receive: Optional[Set[str]] = None,
+    *,
+    budget_left: Optional[int] = None,
+) -> List[Move]:
+    """同一SKUの全ロットを列を跨いで評価し、最古ロットを最優先引き当て位置に配置。
+    
+    引き当て順序の優先度: Lv小 → 列小 → 奥行小
+    目的: 「古いロットが必ず先に引き当てられる」ようにロケーションを再配置
+    """
+    moves: List[Move] = []
+    def _can_add(k: int) -> bool:
+        return (budget_left is None) or (len(moves) + int(k) <= int(budget_left))
+    
+    if inv.empty:
+        print("[Pass-FIFO] inv is empty")
+        return moves
+    
+    # 有効な在庫のみ（容積あり、ロット日付あり、移動対象）
+    # is_movable: バラのみ or 2ケース以下+バラ混在 は除外済み
+    filter_cond = (inv["volume_each_case"] > 0) & (inv["lot_key"] != UNKNOWN_LOT_KEY)
+    if "is_movable" in inv.columns:
+        filter_cond = filter_cond & (inv["is_movable"] == True)
+    subset = inv[filter_cond].copy()
+    if subset.empty:
+        print("[Pass-FIFO] subset is empty after filtering")
+        return moves
+    
+    pick_levels = [int(x) for x in getattr(cfg, "pick_levels", (1, 2))]
+    
+    # 引き当て優先度キー（小さいほど優先）
+    def _pick_priority_key(lv: int, col: int, dep: int) -> tuple:
+        return (lv, col, dep)
+    
+    # SKU毎にグループ化して処理
+    sku_groups = subset.groupby("商品ID")
+    processed_skus = 0
+    skus_with_cross_column_issue = 0
+    
+    for sku, sku_df in sku_groups:
+        if len(sku_df) <= 1:
+            continue
+        
+        # このSKUの全ロットを列を問わず収集
+        lots_info = []
+        for idx, row in sku_df.iterrows():
+            lot_key = int(row["lot_key"])
+            from_loc = str(row["ロケーション"])
+            lv, col, dep = _parse_loc8(from_loc)
+            qty_cases = int(row.get("qty_cases_move") or 0)
+            vol_each = float(row.get("volume_each_case") or 0.0)
+            if qty_cases <= 0 or vol_each <= 0:
+                continue
+            lots_info.append({
+                "idx": idx,
+                "row": row,
+                "lot_key": lot_key,
+                "from_loc": from_loc,
+                "lv": lv,
+                "col": col,
+                "dep": dep,
+                "qty_cases": qty_cases,
+                "vol_each": vol_each,
+                "need_vol": vol_each * qty_cases,
+                "pick_priority": _pick_priority_key(lv, col, dep),
+            })
+        
+        if len(lots_info) <= 1:
+            continue
+        
+        # ロット日付順にソート（古い順）
+        lots_sorted_by_date = sorted(lots_info, key=lambda x: x["lot_key"])
+        # 引き当て優先度順にソート（現在位置ベース）
+        lots_sorted_by_priority = sorted(lots_info, key=lambda x: x["pick_priority"])
+        
+        # 違反チェック: 古いロットが後から引き当てられる場合
+        violations = []
+        for i, current in enumerate(lots_sorted_by_priority):
+            for j, other in enumerate(lots_sorted_by_priority[i+1:], i+1):
+                if current["lot_key"] > other["lot_key"]:
+                    # current(新しい)がother(古い)より先に引き当てられる = FIFO違反
+                    violations.append((current, other))
+        
+        if not violations:
+            continue
+        
+        skus_with_cross_column_issue += 1
+        processed_skus += 1
+        
+        # 違反を解消するための移動を計画
+        # 戦略: 最古ロットを、現在空いている中で最も引き当て優先度が高い位置へ移動
+        # 重要: 古い順に優先位置を「予約」していき、新しいロットが古いロットより優先位置にならないようにする
+        
+        # 取口レベル(Lv1-2)の空きロケーションを収集
+        available_pick_locs = []
+        for loc in shelf_usage.keys():
+            if loc in PLACEHOLDER_LOCS:
+                continue
+            if can_receive is not None and loc not in can_receive:
+                continue
+            lv, col, dep = _parse_loc8(loc)
+            if lv not in pick_levels:
+                continue
+            used = float(shelf_usage.get(loc, 0.0))
+            limit = cap_by_loc.get(loc, cap_limit) if cap_by_loc else cap_limit
+            available_cap = limit - used
+            if available_cap <= 0:
+                continue
+            # 完全空きロケか判定（used==0）
+            is_empty = (used == 0.0)
+            available_pick_locs.append({
+                "loc": loc,
+                "lv": lv,
+                "col": col,
+                "dep": dep,
+                "available_cap": available_cap,
+                "is_empty": is_empty,  # 空きロケフラグ
+                "pick_priority": _pick_priority_key(lv, col, dep),
+            })
+        
+        # 引き当て優先度順にソート（空きロケを優先、同優先度なら完全空きを先に）
+        # ソートキー: (is_empty=Falseが後ろ, pick_priority)
+        available_pick_locs.sort(key=lambda x: (not x["is_empty"], x["pick_priority"]))
+        
+        # 古いロットから順に最優先位置を割り当てる
+        # next_priority_idx: 次に割り当てる優先位置のインデックス
+        next_priority_idx = 0
+        used_locs = set()  # この処理で使用したロケーション
+        
+        for lot_info in lots_sorted_by_date:
+            if not _can_add(1):
+                break
+            
+            current_priority = lot_info["pick_priority"]
+            
+            # このロットに割り当てるべき位置を探す
+            # 条件: 現在位置より優先度が高く、まだ使われていない位置
+            best_dest = None
+            while next_priority_idx < len(available_pick_locs):
+                dest = available_pick_locs[next_priority_idx]
+                
+                # 既に別のロットで使用済み、または容量不足ならスキップ
+                if dest["loc"] in used_locs or dest["available_cap"] < lot_info["need_vol"]:
+                    next_priority_idx += 1
+                    continue
+                
+                # 現在位置と同じならスキップして次へ
+                if dest["loc"] == lot_info["from_loc"]:
+                    # この位置は「このロットのもの」としてマーク
+                    used_locs.add(dest["loc"])
+                    next_priority_idx += 1
+                    break
+                
+                # この位置が現在位置より優先度が高いなら移動
+                if dest["pick_priority"] < current_priority:
+                    best_dest = dest
+                    used_locs.add(dest["loc"])
+                    next_priority_idx += 1
+                    break
+                else:
+                    # 現在位置の方が優先度が高い = 移動不要
+                    # ただし、次のロットのために現在位置は「使用済み」にしておく
+                    next_priority_idx += 1
+                    break
+            
+            if best_dest is None:
+                continue
+            
+            # 移動を記録
+            to_loc = best_dest["loc"]
+            to_lv, to_col, to_dep = best_dest["lv"], best_dest["col"], best_dest["dep"]
+            from_lv, from_col, from_dep = lot_info["lv"], lot_info["col"], lot_info["dep"]
+            row = lot_info["row"]
+            lot_key = lot_info["lot_key"]
+            
+            # ロット日付のフォーマット
+            lot_date_str = _lot_key_to_datestr8(lot_key)
+            formatted_date = ""
+            if lot_date_str:
+                formatted_date = f"{lot_date_str[0:4]}/{lot_date_str[4:6]}/{lot_date_str[6:8]}"
+            
+            # 移動理由を構築
+            reason_parts = []
+            reason_parts.append(f"FIFO是正(Lot:{formatted_date})")
+            reason_parts.append(f"列{from_col}→{to_col}")
+            if to_lv != from_lv:
+                reason_parts.append(f"Lv{from_lv}→{to_lv}")
+            reason_parts.append("最古ロット優先引当")
+            
+            moves.append(Move(
+                sku_id=str(sku),
+                lot=str(row.get("ロット") or ""),
+                qty=lot_info["qty_cases"],
+                from_loc=str(lot_info["from_loc"]).zfill(8),
+                to_loc=str(to_loc).zfill(8),
+                lot_date=lot_date_str,
+                reason=" → ".join(reason_parts),
+            ))
+            
+            # 棚使用量を更新
+            shelf_usage[lot_info["from_loc"]] = max(0.0, shelf_usage.get(lot_info["from_loc"], 0.0) - lot_info["need_vol"])
+            shelf_usage[to_loc] = shelf_usage.get(to_loc, 0.0) + lot_info["need_vol"]
+            
+            # 使用済みとしてマーク
+            used_locs.add(to_loc)
+            
+            # invのロケーション情報も更新
+            inv.at[lot_info["idx"], "lv"] = to_lv
+            inv.at[lot_info["idx"], "col"] = to_col
+            inv.at[lot_info["idx"], "dep"] = to_dep
+            inv.at[lot_info["idx"], "ロケーション"] = to_loc
+            
+            # lot_infoの優先度も更新
+            lot_info["lv"] = to_lv
+            lot_info["col"] = to_col
+            lot_info["dep"] = to_dep
+            lot_info["from_loc"] = to_loc
+            lot_info["pick_priority"] = _pick_priority_key(to_lv, to_col, to_dep)
+    
+    # 移動先が空きロケだった件数をカウント
+    empty_loc_used = sum(1 for m in moves if shelf_usage.get(m.to_loc, 0.0) == 0.0 or m.to_loc in used_locs)
+    print(f"[Pass-FIFO] Processed {processed_skus} SKUs with cross-column issues, generated {len(moves)} moves (空きロケ使用: {empty_loc_used}件)")
+    return moves
+
+
 #
 # Pass-1: Pick/Storage balance (古いロットを取口=1-2段、新しいロットを保管=3-4段)
 def _pass1_pick_storage_balance(
@@ -1433,7 +1667,12 @@ def _pass1_pick_storage_balance(
     has_lot = len(inv[inv["lot_key"] != UNKNOWN_LOT_KEY])
     print(f"[Pass-1] total={total_rows}, has_volume={has_volume}, has_lot={has_lot}, unknown_lot_key={UNKNOWN_LOT_KEY}")
     
-    subset = inv[(inv["volume_each_case"] > 0) & (inv["lot_key"] != UNKNOWN_LOT_KEY)].copy()
+    # 有効な在庫のみ（容積あり、ロット日付あり、移動対象）
+    # is_movable: バラのみ or 2ケース以下+バラ混在 は除外済み
+    filter_cond = (inv["volume_each_case"] > 0) & (inv["lot_key"] != UNKNOWN_LOT_KEY)
+    if "is_movable" in inv.columns:
+        filter_cond = filter_cond & (inv["is_movable"] == True)
+    subset = inv[filter_cond].copy()
     if subset.empty:
         print(f"[Pass-1] subset is empty after filtering (needs volume>0 AND lot_key!={UNKNOWN_LOT_KEY})")
         return moves
@@ -1526,6 +1765,7 @@ def _pass1_pick_storage_balance(
 
             best_to = None
             best_score = math.inf
+            empty_cand_count = sum(1 for loc in cand_locs if shelf_usage.get(loc, 0.0) == 0.0)
             for to_loc in cand_locs:
                 tlv, tcol, tdep = _parse_loc8(to_loc)
                 used = float(shelf_usage.get(to_loc, 0.0))
@@ -1534,10 +1774,20 @@ def _pass1_pick_storage_balance(
                     continue
                 if _violates_lot_level_rule(inv, str(row["商品ID"]), lot_key, tlv, tcol, tdep, idx):
                     continue
-                score = abs(tlv - cur_lv) + (tdep * 0.001)
+                # 空きロケ（used==0）を優先するスコア計算
+                # 空きロケなら-1000でスコアを大幅に下げる
+                is_empty_bonus = -1000.0 if (used == 0.0) else 0.0
+                score = abs(tlv - cur_lv) + (tdep * 0.001) + is_empty_bonus
                 if score < best_score:
                     best_score = score
                     best_to = to_loc
+            
+            # デバッグ: 空きロケ候補がある場合はログ出力
+            if empty_cand_count > 0 and best_to and shelf_usage.get(best_to, 0.0) > 0:
+                try:
+                    print(f"[Pass-1 Debug] 空きロケ{empty_cand_count}件あったが選ばれず: col={c_int}, sku={row['商品ID']}, best_to={best_to} (used={shelf_usage.get(best_to, 0.0):.2f})")
+                except:
+                    pass
 
             # --- 2) 空き候補が全く無い場合、同列内スワップを試行
             if best_to is None and enable_swap and swap_budget_left > 0:
@@ -1905,7 +2155,7 @@ def _find_best_destination_for_row(
         if lot_key != UNKNOWN_LOT_KEY and tcol == int(row.get("col") or 0):
             if _violates_lot_level_rule(inv, str(row["商品ID"]), lot_key, tlv, tcol, tdep, None):
                 continue
-        # score and pick
+        # score and pick（空きロケを優先）
         s = _score_destination_for_row(
             row,
             str(to_loc),
@@ -1919,6 +2169,10 @@ def _find_best_destination_for_row(
             depths_by_col=depths_by_col,
             cfg=cfg,
         )
+        # 空きロケ（used==0）の場合、スコアを大幅に下げて優先
+        used = float(shelf_usage.get(to_loc, 0.0))
+        if used == 0.0:
+            s -= 1000.0  # 空きロケ優先ボーナス
         if s < best_score:
             best_score = s
             best_to = str(to_loc)
@@ -2828,6 +3082,21 @@ def plan_relocation(
     # プレースホルダロケは移動元として扱わない
     inv = inv[~inv["ロケーション"].astype(str).isin(PLACEHOLDER_LOCS)].copy()
 
+    # ロケマスタに存在するロケーションのみを移動対象とする
+    if cap_by_loc:
+        valid_locs_set = set(cap_by_loc.keys())
+        before_count = len(inv)
+        inv = inv[inv["ロケーション"].astype(str).str.zfill(8).isin(valid_locs_set)].copy()
+        excluded_count = before_count - len(inv)
+        print(f"[optimizer] ロケマスタ存在チェック: {excluded_count}件除外 → 残り{len(inv)}件")
+        try:
+            _publish_progress(get_current_trace_id(), {
+                "type": "info", "phase": "filter",
+                "message": f"ロケマスタ存在チェック: {excluded_count}件除外 → 残り{len(inv)}件"
+            })
+        except Exception:
+            pass
+
     # 引当在庫は移動対象外: '引当数' が存在し、かつ >0 の行は除外
     try:
         if "引当数" in inv.columns:
@@ -2916,6 +3185,49 @@ def plan_relocation(
         except Exception:
             pass
 
+    # --- バラ数の計算と移動対象フラグ ---
+    # 「バラのみ」または「2ケース以下+バラ混在」は移動対象から除外
+    # qty: 元の総数量、pack_est: 入数
+    if "qty" in inv.columns:
+        inv["_orig_qty"] = pd.to_numeric(inv["qty"], errors="coerce").fillna(0).astype(int)
+    elif "在庫数(引当数を含む)" in inv.columns:
+        inv["_orig_qty"] = pd.to_numeric(inv["在庫数(引当数を含む)"], errors="coerce").fillna(0).astype(int)
+    else:
+        inv["_orig_qty"] = 0
+    
+    # 入数を取得（pack_mapがあれば使用、なければinvのpack_qty）
+    if pack_map is not None:
+        inv["_pack_qty"] = inv["商品ID"].astype(str).map(pack_map).fillna(1.0)
+    elif "pack_qty" in inv.columns:
+        inv["_pack_qty"] = pd.to_numeric(inv["pack_qty"], errors="coerce").fillna(1.0)
+    else:
+        inv["_pack_qty"] = 1.0
+    inv["_pack_qty"] = inv["_pack_qty"].replace({0.0: 1.0})  # 0除算防止
+    
+    # 実際のケース数とバラ数を計算
+    inv["_actual_cases"] = (inv["_orig_qty"] // inv["_pack_qty"]).astype(int)
+    inv["_actual_bara"] = (inv["_orig_qty"] % inv["_pack_qty"]).astype(int)
+    
+    # 移動対象フラグ: バラのみ or 2ケース以下+バラ混在 は除外
+    # is_movable = True: 移動対象（ケースのみ、または3ケース以上+バラ）
+    # is_movable = False: 移動対象外（バラのみ、または1-2ケース+バラ）
+    bara_only = (inv["_actual_cases"] == 0) & (inv["_actual_bara"] > 0)
+    low_case_with_bara = (inv["_actual_cases"] > 0) & (inv["_actual_cases"] <= 2) & (inv["_actual_bara"] > 0)
+    inv["is_movable"] = ~(bara_only | low_case_with_bara)
+    
+    # 除外件数をログ出力
+    bara_only_count = bara_only.sum()
+    low_case_bara_count = low_case_with_bara.sum()
+    movable_count = inv["is_movable"].sum()
+    print(f"[optimizer] バラ除外: バラのみ={bara_only_count}件, 2ケース以下+バラ={low_case_bara_count}件, 移動対象={movable_count}件")
+    try:
+        _publish_progress(get_current_trace_id(), {
+            "type": "info", "phase": "filter",
+            "message": f"バラ除外: バラのみ={bara_only_count}件, 2ケース以下+バラ={low_case_bara_count}件 → 移動対象={movable_count}件"
+        })
+    except Exception:
+        pass
+
     # --- ケース容積を付与（安全側：移動用整数で容量評価）
     key_series = inv["商品ID"].astype(str)
     inv["volume_each_case"] = key_series.map(sku_vol_map).fillna(0.0)
@@ -2999,7 +3311,7 @@ def plan_relocation(
     print(f"[optimizer] shelf_usage locations={len(shelf_usage)} (cap={cap_limit})")
     moves: List[Move] = []
 
-    # --- 実行順序: Pass-1 → Pass-0 (ロット年齢整列を先に、エリア是正を後で) ---
+    # --- 実行順序: Pass-FIFO → Pass-1 → Pass-0 (列跨ぎFIFOを最優先、同列内整列を次に) ---
     import time
     def _log(msg):  # local log helper
         try:
@@ -3014,7 +3326,20 @@ def plan_relocation(
     
     all_candidate_moves: List[Move] = []
     
-    # --- Pass-1: 取口/保管バランス整列（古い→1-2段, 新しい→3-4段）【最優先】
+    # --- Pass-FIFO: 列を跨いだFIFO最適化（最古ロットを最優先引き当て位置へ）【最優先】
+    # Pass-1より先に実行することで、全ロットを考慮した列跨ぎFIFO是正を行う
+    pf_t0 = time.perf_counter()
+    pf_moves = _pass_fifo_cross_column(
+        inv, shelf_usage, cap_limit, cfg,
+        cap_by_loc=cap_by_loc or None,
+        can_receive=can_receive_set or None,
+        budget_left=None,  # 制限なしで候補収集
+    )
+    all_candidate_moves.extend(pf_moves)
+    _log(f"Pass-FIFO cross-column: candidates={len(pf_moves)} time={time.perf_counter()-pf_t0:.2f}s")
+    
+    # --- Pass-1: 取口/保管バランス整列（古い→1-2段, 新しい→3-4段）【第2優先】
+    # Pass-FIFOで移動しなかったロットに対して、同一列内での段整列を行う
     p1_t0 = time.perf_counter()
     p1_moves = _pass1_pick_storage_balance(
         inv, shelf_usage, cap_limit, cfg,
@@ -3051,6 +3376,8 @@ def plan_relocation(
         reason = str(m.reason or "")
         if "古ロット" in reason or "先入先出" in reason or "取口配置" in reason:
             return 1  # Pass-1: FIFO最優先
+        elif "FIFO是正" in reason or "最古ロット優先" in reason:
+            return 1  # Pass-FIFO: 列跨ぎFIFOも最優先
         elif "入数帯是正" in reason or "エリア" in reason or "列移動" in reason or "入口に近づく" in reason:
             return 2  # Pass-0: エリア
         elif "圧縮" in reason or "集約" in reason:
