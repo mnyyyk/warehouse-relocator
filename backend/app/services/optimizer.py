@@ -3186,7 +3186,7 @@ def plan_relocation(
             pass
 
     # --- バラ数の計算と移動対象フラグ ---
-    # 「バラのみ」または「2ケース以下+バラ混在」は移動対象から除外
+    # 「バラのみ」または「10ケース以下+バラ混在」は移動対象から除外
     # qty: 元の総数量、pack_est: 入数
     if "qty" in inv.columns:
         inv["_orig_qty"] = pd.to_numeric(inv["qty"], errors="coerce").fillna(0).astype(int)
@@ -3208,22 +3208,22 @@ def plan_relocation(
     inv["_actual_cases"] = (inv["_orig_qty"] // inv["_pack_qty"]).astype(int)
     inv["_actual_bara"] = (inv["_orig_qty"] % inv["_pack_qty"]).astype(int)
     
-    # 移動対象フラグ: バラのみ or 2ケース以下+バラ混在 は除外
-    # is_movable = True: 移動対象（ケースのみ、または3ケース以上+バラ）
-    # is_movable = False: 移動対象外（バラのみ、または1-2ケース+バラ）
+    # 移動対象フラグ: バラのみ or 10ケース以下+バラ混在 は除外
+    # is_movable = True: 移動対象（ケースのみ、または11ケース以上+バラ）
+    # is_movable = False: 移動対象外（バラのみ、または1-10ケース+バラ）
     bara_only = (inv["_actual_cases"] == 0) & (inv["_actual_bara"] > 0)
-    low_case_with_bara = (inv["_actual_cases"] > 0) & (inv["_actual_cases"] <= 2) & (inv["_actual_bara"] > 0)
+    low_case_with_bara = (inv["_actual_cases"] > 0) & (inv["_actual_cases"] <= 10) & (inv["_actual_bara"] > 0)
     inv["is_movable"] = ~(bara_only | low_case_with_bara)
     
     # 除外件数をログ出力
     bara_only_count = bara_only.sum()
     low_case_bara_count = low_case_with_bara.sum()
     movable_count = inv["is_movable"].sum()
-    print(f"[optimizer] バラ除外: バラのみ={bara_only_count}件, 2ケース以下+バラ={low_case_bara_count}件, 移動対象={movable_count}件")
+    print(f"[optimizer] バラ除外: バラのみ={bara_only_count}件, 10ケース以下+バラ={low_case_bara_count}件, 移動対象={movable_count}件")
     try:
         _publish_progress(get_current_trace_id(), {
             "type": "info", "phase": "filter",
-            "message": f"バラ除外: バラのみ={bara_only_count}件, 2ケース以下+バラ={low_case_bara_count}件 → 移動対象={movable_count}件"
+            "message": f"バラ除外: バラのみ={bara_only_count}件, 10ケース以下+バラ={low_case_bara_count}件 → 移動対象={movable_count}件"
         })
     except Exception:
         pass
