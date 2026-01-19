@@ -135,6 +135,28 @@ _LAST_SUMMARY_REPORT: Optional[str] = None  # サマリーレポートを保存�
 _SUMMARY_REPORTS: Dict[str, str] = {}  # trace_id -> サマリーレポートのマッピング
 _SUMMARY_REPORTS_LIMIT = 50  # 最大保存件数
 
+# 移動データキャッシュ（タイムアウト後もフロントエンドが取得できるように）
+_MOVES_CACHE: Dict[str, List[Dict[str, Any]]] = {}  # trace_id -> moves
+_MOVES_CACHE_LIMIT = 10  # 最大保存件数
+
+def cache_moves(trace_id: str, moves: List[Dict[str, Any]]) -> None:
+    """Cache moves for a given trace_id (for timeout recovery)."""
+    global _MOVES_CACHE
+    if len(_MOVES_CACHE) >= _MOVES_CACHE_LIMIT:
+        # 古いものを削除
+        oldest = next(iter(_MOVES_CACHE))
+        del _MOVES_CACHE[oldest]
+    _MOVES_CACHE[trace_id] = moves
+
+def get_cached_moves(trace_id: Optional[str] = None) -> Optional[List[Dict[str, Any]]]:
+    """Get cached moves for a given trace_id, or the latest if not specified."""
+    if trace_id:
+        return _MOVES_CACHE.get(trace_id)
+    if _MOVES_CACHE:
+        # 最新を返す
+        return list(_MOVES_CACHE.values())[-1]
+    return None
+
 # --------------------------------
 # Progress SSE (simple in-memory pub/sub per trace)
 # --------------------------------
@@ -4332,6 +4354,13 @@ def plan_relocation(
                 print("[optimizer] Summary report published via SSE")
             except Exception as e:
                 print(f"[optimizer] Failed to publish summary report: {e}")
+        
+        # Cache moves for timeout recovery
+        current_trace = get_current_trace_id()
+        if current_trace and accepted:
+            moves_data = [m.to_dict() if hasattr(m, 'to_dict') else m.__dict__ for m in accepted]
+            cache_moves(current_trace, moves_data)
+            print(f"[optimizer] Cached {len(moves_data)} moves for trace_id={current_trace}")
         
         return accepted
 

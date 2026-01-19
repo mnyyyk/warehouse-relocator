@@ -546,11 +546,11 @@ const OptimizePage: NextPage & { pageTitle?: string } = () => {
             await new Promise(r => setTimeout(r, 5000));
             try {
               const { json: debugJson } = await getWithFallback(`/v1/upload/relocation/debug`);
-              console.log(`[Polling ${i+1}/90] debug response:`, debugJson?.planned, debugJson?.accepted);
+              console.log(`[Polling ${i+1}/90] debug response:`, debugJson?.planned, debugJson?.accepted, 'moves:', debugJson?.moves?.length);
               
               // accepted > 0 なら処理完了と判断
               if (typeof debugJson?.accepted === 'number' && debugJson.accepted > 0) {
-                console.log('[Relocation] Processing complete, fetching full results...');
+                console.log('[Relocation] Processing complete, fetching results from cache...');
                 setLiveAccepted(debugJson.accepted);
                 setLivePlanned(debugJson.planned);
                 
@@ -559,8 +559,22 @@ const OptimizePage: NextPage & { pageTitle?: string } = () => {
                   setSummaryReport(debugJson.summary_report);
                 }
                 
-                // 移動データを取得するために再度startを呼び出す（キャッシュから返される）
+                // キャッシュされた移動データを取得（/debug から返される）
+                if (debugJson.moves && Array.isArray(debugJson.moves) && debugJson.moves.length > 0) {
+                  console.log('[Relocation] Using cached moves from debug endpoint:', debugJson.moves.length);
+                  const mvWithDist: Move[] = debugJson.moves.map((m: any) => ({
+                    ...m,
+                    distance: m.distance ?? distanceOf(m.from_loc, m.to_loc),
+                    lot_date: m.lot_date ?? deriveLotDate(m.lot),
+                  }));
+                  setMoves(mvWithDist);
+                  setReloStatus(`✔ 最適化完了（${mvWithDist.length}件）`);
+                  return;
+                }
+                
+                // キャッシュがなければ再度startを試行（フォールバック）
                 try {
+                  console.log('[Relocation] No cached moves, retrying start...');
                   const startPayload: any = {
                     block_codes: blocks,
                     fill_rate: fillRate,

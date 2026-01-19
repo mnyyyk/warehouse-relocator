@@ -2616,13 +2616,16 @@ def relocation_last_debug(trace_id: Optional[str] = None):
     except Exception:
         rel = {}
     try:
-        from app.services.optimizer import get_last_summary_report, get_summary_report
+        from app.services.optimizer import get_last_summary_report, get_summary_report, get_cached_moves
         if trace_id:
             summary_report = get_summary_report(trace_id)
+            cached_moves = get_cached_moves(trace_id)
         else:
             summary_report = get_last_summary_report()
+            cached_moves = get_cached_moves()
     except Exception:
         summary_report = None
+        cached_moves = None
 
     # Compact, UI‑friendly payload
     return {
@@ -2635,6 +2638,8 @@ def relocation_last_debug(trace_id: Optional[str] = None):
         "relocation": rel,
         # サマリーレポートを追加
         "summary_report": summary_report,
+        # キャッシュされた移動データ（タイムアウトリカバリ用）
+        "moves": cached_moves,
     }
 
 def _df_from_sku(session: Session) -> pd.DataFrame:
