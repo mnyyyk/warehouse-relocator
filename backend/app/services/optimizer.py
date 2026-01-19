@@ -680,6 +680,11 @@ class OptimizerConfig:
     enable_candidate_limit: bool = True # 候補ロケーション数の制限
     max_candidates_per_level: int = 50  # レベルごとの最大候補数（0=無制限）
     
+    # --- SKU per-location limit (作業負荷軽減) ---
+    # 1SKUあたりの移動元ロケーション数の上限（None=無制限）
+    # 最も古いロットのロケーションを優先的に選択
+    max_source_locs_per_sku: Optional[int] = 2
+    
 # -------------------------------
 # Additional helpers for hard constraints and pack clustering
 # -------------------------------
@@ -3432,14 +3437,46 @@ def plan_relocation(
         traceback.print_exc()
         raise
     
-    # max_moves制限を適用
+    # max_moves制限とSKU移動元ロケーション数制限を適用
     max_moves = getattr(cfg, "max_moves", None)
-    print(f"[optimizer] max_moves={max_moves}, total_candidates={len(moves_with_meta)}")
-    if max_moves is not None and len(moves_with_meta) > max_moves:
-        moves = [x[0] for x in moves_with_meta[:max_moves]]
-        _log(f"Trimmed to top {max_moves} moves (from {len(moves_with_meta)} candidates)")
-    else:
-        moves = [x[0] for x in moves_with_meta]
+    max_source_locs_per_sku = getattr(cfg, "max_source_locs_per_sku", None)
+    print(f"[optimizer] max_moves={max_moves}, max_source_locs_per_sku={max_source_locs_per_sku}, total_candidates={len(moves_with_meta)}")
+    
+    # SKUごとの移動元ロケーション数を制限しながら選択
+    moves = []
+    sku_source_locs: Dict[str, Set[str]] = {}  # SKU -> 移動元ロケーションのセット
+    skipped_by_limit = 0
+    
+    for m, priority, gain in moves_with_meta:
+        # max_moves制限チェック
+        if max_moves is not None and len(moves) >= max_moves:
+            break
+        
+        # SKU移動元ロケーション数制限チェック
+        if max_source_locs_per_sku is not None:
+            sku_id = str(m.sku_id)
+            from_loc = str(m.from_loc)
+            
+            if sku_id not in sku_source_locs:
+                sku_source_locs[sku_id] = set()
+            
+            # このSKUの移動元ロケーション数が上限に達している場合
+            if from_loc not in sku_source_locs[sku_id]:
+                if len(sku_source_locs[sku_id]) >= max_source_locs_per_sku:
+                    # スキップ（別のロケーションからの移動は許可しない）
+                    skipped_by_limit += 1
+                    continue
+                # 新しい移動元ロケーションを追加
+                sku_source_locs[sku_id].add(from_loc)
+        
+        moves.append(m)
+    
+    if skipped_by_limit > 0:
+        _log(f"SKU移動元ロケーション数制限により {skipped_by_limit} 件をスキップ")
+        print(f"[optimizer] Skipped {skipped_by_limit} moves due to max_source_locs_per_sku={max_source_locs_per_sku}")
+    
+    if max_moves is not None and len(moves_with_meta) > len(moves):
+        _log(f"Trimmed to {len(moves)} moves (from {len(moves_with_meta)} candidates)")
     
     print(f"[optimizer] After selection: len(moves)={len(moves)}")
     

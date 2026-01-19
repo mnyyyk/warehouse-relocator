@@ -1,5 +1,5 @@
 import pandas as pd
-from sqlmodel import Session
+from sqlmodel import Session, select, delete
 from app.services.ingestion import ingest
 from app.models import Sku
 from app.core.database import engine
@@ -13,8 +13,12 @@ def test_ingest_sku(tmp_path):
         }
     )
     with Session(engine) as ses:
+        # テスト前にテーブルをクリア
+        ses.exec(delete(Sku))
+        ses.commit()
+        
         summary = ingest("sku", df, ses)
         assert summary["success_rows"] == 2
         # DB 確認
-        rows = ses.exec(Sku.select()).all()
+        rows = ses.exec(select(Sku)).all()
         assert {r.sku_id for r in rows} == {"X1", "X2"}

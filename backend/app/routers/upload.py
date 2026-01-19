@@ -2204,7 +2204,7 @@ def _call_plan_relocation_compat(*, cfg, sku_df, inv_df, ship_df, recv_df, locat
 class RelocationStartRequest(BaseModel):
     block_codes: list[str] | None = None
     quality_names: list[str] | None = None  # 追加: 品質区分で対象を限定
-    max_moves: int = 200
+    max_moves: int | None = None  # None または 0 = 無制限（全件最適化）
     # 容量上限は棚容量の90%（要件に合わせてデフォルトを0.90へ）
     fill_rate: float = 0.90
     # --- AI 配線オプション ---
@@ -2215,6 +2215,8 @@ class RelocationStartRequest(BaseModel):
     # --- AIメイン切替 & 回転期間 ---
     use_ai_main: bool = False
     rotation_window_days: int = 90
+    # --- SKU移動元ロケーション数制限 ---
+    max_source_locs_per_sku: int | None = 2  # 1SKUあたり最大何ロケーションから移動するか（None=無制限）
     # --- 連鎖退避の有効化と予算（optimizer.py で実装済みの新機能） ---
     chain_depth: int = 2           # 0=無効, 1..N=最大連鎖段数（デフォルト2）
     eviction_budget: int = 50      # 退避移動の総数上限（デフォルト有効）
@@ -2252,8 +2254,12 @@ def relocation_start(
         cfg = SimpleNamespace()
 
     # Apply user-provided knobs uniformly; ignore if OptimizerConfig doesn't have them
+    # max_moves: 0 または None は「無制限」として扱う
+    effective_max_moves = req.max_moves if (req.max_moves is not None and req.max_moves > 0) else None
+    setattr(cfg, "max_moves", effective_max_moves)
+    
     for _k in (
-        "max_moves",
+        # "max_moves" は上で処理済み
         "fill_rate",
         "use_ai",
         "ai_max_candidates",
@@ -2267,6 +2273,8 @@ def relocation_start(
         "enable_pass0_area_rebalance",
         "enable_pass1_swap",
         "pass1_swap_budget_per_group",
+        # --- SKU移動元ロケーション数制限 ---
+        "max_source_locs_per_sku",
         # --- band preference knobs passed through 1:1 ---
         "pack_low_max",
         "pack_high_min",

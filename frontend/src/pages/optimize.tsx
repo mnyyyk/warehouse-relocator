@@ -319,6 +319,14 @@ const OptimizePage: NextPage & { pageTitle?: string } = () => {
     return Number.isFinite(n) && n > 0 ? n : undefined; // 0/無効/空欄 → 未指定
   }, [maxMovesInput]);
 
+  // SKU移動元ロケーション数制限（デフォルト: 2）
+  const [maxSourceLocsInput, setMaxSourceLocsInput] = useState<string>('2');
+  const maxSourceLocsPerSku = useMemo(() => {
+    if (maxSourceLocsInput === '') return undefined; // 空欄=無制限
+    const n = parseInt(maxSourceLocsInput, 10);
+    return Number.isFinite(n) && n > 0 ? n : undefined;
+  }, [maxSourceLocsInput]);
+
   const [fillRate, setFillRate] = useState<number>(0.9); // デフォルト0.9
   const [useAiMain, setUseAiMain] = useState<boolean>(true);
   const [reloStatus, setReloStatus] = useState<string>('');
@@ -438,6 +446,7 @@ const OptimizePage: NextPage & { pageTitle?: string } = () => {
       // Attach client-provided trace id so SSE stream aligns
       payload.trace_id = traceId;
       if (typeof maxMoves === 'number') payload.max_moves = maxMoves; // 未指定なら送らない
+      if (typeof maxSourceLocsPerSku === 'number') payload.max_source_locs_per_sku = maxSourceLocsPerSku;
       if (qualities.length) payload.quality_names = qualities;
       if (typeof chainDepth === 'number') payload.chain_depth = chainDepth;
       if (typeof evictionBudget === 'number') payload.eviction_budget = evictionBudget;
@@ -1378,6 +1387,18 @@ const OptimizePage: NextPage & { pageTitle?: string } = () => {
               onChange={(e) => setMaxMovesInput(e.target.value)}
               placeholder="空欄=無制限"
               title="0 または空欄で無制限（バックエンド既定）"
+            />
+          </label>
+          <label className="text-sm">
+            1SKU最大移動元ロケ数：
+            <input
+              type="number"
+              className="ml-2 rounded-lg border border-black/10 bg-white px-3 py-2 text-sm w-20 focus:outline-none focus:ring-2 focus:ring-black/20"
+              min={1}
+              value={maxSourceLocsInput}
+              onChange={(e) => setMaxSourceLocsInput(e.target.value)}
+              placeholder="空欄=無制限"
+              title="1SKUあたり最大何ロケーションから移動するか制限（空欄で無制限）。デフォルト2 = 最も古いロットの2ロケーションを優先"
             />
           </label>
           <label className="text-sm">
