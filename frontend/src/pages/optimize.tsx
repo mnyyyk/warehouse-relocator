@@ -530,37 +530,84 @@ const OptimizePage: NextPage & { pageTitle?: string } = () => {
       }
     } catch (e: any) {
       console.error('Relocation error:', e); // デバッグログ
-      // タイムアウトエラーでも、SSE/ポーリングで進捗が確認できていれば失敗扱いしない
+      // タイムアウトエラーの場合、バックエンドで処理が完了している可能性があるためポーリングで確認
       const errMsg = String(e?.message || e);
       const isTimeout = errMsg.toLowerCase().includes('timeout') ||
                         errMsg.includes('upstream') ||
-                        errMsg === '{}';
-      if (isTimeout && ((livePlanned ?? 0) > 0 || (liveAccepted ?? 0) > 0)) {
-        console.log('[Relocation] Timeout but progress detected, continuing to poll...');
-        setReloStatus(`⏳ 処理中... (planned=${livePlanned ?? 0}, accepted=${liveAccepted ?? 0}) - バックグラウンドで実行中`);
+                        errMsg === '{}' ||
+                        errMsg.includes('504') ||
+                        errMsg.includes('502');
+      if (isTimeout) {
+        console.log('[Relocation] Timeout detected, polling for completed result...');
+        setReloStatus(`⏳ サーバーで処理中... 完了を待機しています`);
         // ポーリングで結果を待つ
         const pollForResult = async () => {
-          for (let i = 0; i < 60; i++) { // 最大5分待機
+          for (let i = 0; i < 90; i++) { // 最大7.5分待機
             await new Promise(r => setTimeout(r, 5000));
             try {
-              const { json: debugJson } = await getWithFallback(`/v1/upload/relocation/debug?trace_id=${encodeURIComponent(traceId)}`);
-              if (debugJson?.moves && Array.isArray(debugJson.moves) && debugJson.moves.length > 0) {
-                const mvWithDist: Move[] = debugJson.moves.map((m: any) => ({
-                  ...m,
-                  distance: m.distance ?? distanceOf(m.from_loc, m.to_loc),
-                  lot_date: m.lot_date ?? deriveLotDate(m.lot),
-                }));
-                setMoves(mvWithDist);
-                setReloStatus(`✔ 最適化完了（${mvWithDist.length}件）`);
-                if (debugJson.summary_report) setSummaryReport(debugJson.summary_report);
+              const { json: debugJson } = await getWithFallback(`/v1/upload/relocation/debug`);
+              console.log(`[Polling ${i+1}/90] debug response:`, debugJson?.planned, debugJson?.accepted);
+              
+              // accepted > 0 なら処理完了と判断
+              if (typeof debugJson?.accepted === 'number' && debugJson.accepted > 0) {
+                console.log('[Relocation] Processing complete, fetching full results...');
+                setLiveAccepted(debugJson.accepted);
+                setLivePlanned(debugJson.planned);
+                
+                // サマリーレポートを設定
+                if (debugJson.summary_report) {
+                  setSummaryReport(debugJson.summary_report);
+                }
+                
+                // 移動データを取得するために再度startを呼び出す（キャッシュから返される）
+                try {
+                  const startPayload: any = {
+                    block_codes: blocks,
+                    fill_rate: fillRate,
+                    use_ai_main: useAiMain,
+                    rotation_window_days: windowDays,
+                    include_debug: true,
+                  };
+                  if (typeof maxMoves === 'number') startPayload.max_moves = maxMoves;
+                  if (typeof maxSourceLocsPerSku === 'number') startPayload.max_source_locs_per_sku = maxSourceLocsPerSku;
+                  if (qualities.length) startPayload.quality_names = qualities;
+                  
+                  const { json: startJson } = await postWithFallback('/v1/upload/relocation/start', startPayload);
+                  const mv: Move[] = Array.isArray(startJson)
+                    ? startJson
+                    : Array.isArray(startJson?.moves)
+                    ? startJson.moves
+                    : [];
+                  
+                  if (mv.length > 0) {
+                    const mvWithDist: Move[] = mv.map((m) => ({
+                      ...m,
+                      distance: m.distance ?? distanceOf(m.from_loc, m.to_loc),
+                      lot_date: m.lot_date ?? deriveLotDate(m.lot),
+                    }));
+                    setMoves(mvWithDist);
+                    setReloStatus(`✔ 最適化完了（${mvWithDist.length}件）`);
+                    return;
+                  }
+                } catch (retryErr) {
+                  console.warn('[Relocation] Retry start failed:', retryErr);
+                }
+                
+                // startが失敗してもサマリーは表示
+                setReloStatus(`✔ 処理完了（accepted=${debugJson.accepted}件）- 詳細はサマリーを参照`);
                 return;
               }
-              if (typeof debugJson?.accepted === 'number') setLiveAccepted(debugJson.accepted);
+              
+              // 進捗を表示
               if (typeof debugJson?.planned === 'number') setLivePlanned(debugJson.planned);
+              if (typeof debugJson?.accepted === 'number') setLiveAccepted(debugJson.accepted);
               setReloStatus(`⏳ 処理中... (planned=${debugJson?.planned ?? '-'}, accepted=${debugJson?.accepted ?? '-'})`);
-            } catch { /* continue polling */ }
+            } catch (pollErr) {
+              console.warn('[Polling] Error:', pollErr);
+              /* continue polling */
+            }
           }
-          setReloStatus(`⚠ タイムアウト: debugエンドポイントで結果を確認してください`);
+          setReloStatus(`⚠ タイムアウト: サマリーレポートで結果を確認してください`);
         };
         pollForResult().finally(() => {
           setRelocating(false);
