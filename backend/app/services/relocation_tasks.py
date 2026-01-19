@@ -35,7 +35,7 @@ except ImportError:  # pragma: no cover
     def optimise_relocation(  # type: ignore
         *,  # keep kwargs‑only interface
         max_moves: int = 500,
-        fill_rate: float = 0.90,
+        fill_rate: float = 0.95,
         weights: Mapping[str, float] | None = None,
         **unused: Any,
     ) -> list[dict[str, Any]]:
@@ -63,7 +63,7 @@ def run_relocation_task(
     job_id: str | None = None,
     block_codes: list[str] | None = None,
     max_moves: int = 500,
-    fill_rate: float = 0.90,
+    fill_rate: float = 0.95,
     weights: Mapping[str, float] | None = None,
 ) -> dict[str, Any]:
     """

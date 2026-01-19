@@ -1,0 +1,96 @@
+ ⚠ Port 3000 is in use by process 58628
+68448, using available port 3002 instead.
+   ▲ Next.js 15.4.5 (Turbopack)
+   - Local:        http://localhost:3002
+   - Network:      http://192.168.0.184:3002
+   - Environments: .env.local
+
+ ✓ Starting...
+ ✓ Ready in 712ms
+ ○ Compiling / ...
+ ✓ Compiled / in 801ms
+ GET / 200 in 888ms
+ � ✓ Compiled / in 109ms
+ GET /?id=2761ef91-f756-4ec8-8c9e-c868ef97a59a&vscodeBrowserReqId=1762105037984 200 in 142ms
+ ⚠ Cross origin request detected from 127.0.0.1 to /_next/* resource. In a future major version of Next.js, you will need to explicitly configure "allowedDevOrigins" in next.config to allow this.
+Read more: https://nextjs.org/docs/app/api-reference/config/next-config-js/allowedDevOrigins
+: ] { code: 'ECONNREFUSED' }
+[AggregateError: ] { code: 'ECONNREFUSED' }
+Failed to proxy http://localhost:8000/v1/upload/sku [AggregateError: ] { code: 'ECONNREFUSED' }
+[AggregateError: ] { code: 'ECONNREFUSED' }
+ ✓ Compiled /_error in 79ms
+ GET /upload 200 in 43ms
+ GET /favicon.ico 200 in 215ms
+Failed to proxy http://localhost:8000/v1/upload/sku [AggregateError: ] { code: 'ECONNREFUSED' }
+[AggregateError: ] { code: 'ECONNREFUSED' }
+Failed to proxy http://localhost:8000/v1/upload/sku [AggregateError: ] { code: 'ECONNREFUSED' }
+[AggregateError: ] { code: 'ECONNREFUSED' }
+ GET /upload 200 in 39ms
+ GET /favicon.ico 200 in 215ms
+Failed to proxy http://localhost:8000/v1/upload/sku [AggregateError: ] { code: 'ECONNREFUSED' }
+[AggregateError: ] { code: 'ECONNREFUSED' }
+Failed to proxy http://localhost:8000/v1/upload/sku [AggregateError: ] { code: 'ECONNREFUSED' }
+[AggregateError: ] { code: 'ECONNREFUSED' }
+ GET /upload 200 in 34ms
+ GET /favicon.ico 200 in 214ms
+Failed to proxy http://localhost:8000/v1/upload/recv_tx [AggregateError: ] { code: 'ECONNREFUSED' }
+[AggregateError: ] { code: 'ECONNREFUSED' }
+Failed to proxy http://localhost:8000/v1/upload/recv_tx [AggregateError: ] { code: 'ECONNREFUSED' }
+[AggregateError: ] { code: 'ECONNREFUSED' }
+ GET /upload 200 in 50ms
+ GET /favicon.ico 200 in 213ms
+ ✓ Compiled /debug in 109ms
+ GET /debug 200 in 50ms
+ GET /favicon.ico 200 in 246ms
+ GET /upload 200 in 50ms
+ GET /favicon.ico 200 in 214ms
+ ✓ Compiled /optimize in 152ms
+ GET /optimize 200 in 47ms
+ GET /favicon.ico 200 in 215ms
+ GET /optimize 200 in 68ms
+ GET /favicon.ico 200 in 256ms
+ ✓ Compiled /analyze in 230ms
+Failed to proxy http://localhost:8000/v1/upload/relocation/start/final-moves [Error: socket hang up] { code: 'ECONNRESET' }
+[Error: socket hang up] { code: 'ECONNRESET' }
+Failed to proxy http://localhost:8000/v1/upload/relocation/debug [AggregateError: ] { code: 'ECONNREFUSED' }
+[AggregateError: ] { code: 'ECONNREFUSED' }
+ GET /optimize 200 in 78ms
+ GET /favicon.ico 200 in 221ms
+Failed to proxy http://localhost:8000/v1/upload/relocation/debug [AggregateError: ] { code: 'ECONNREFUSED' }
+[AggregateError: ] { code: 'ECONNREFUSED' }
+ ✓ Compiled in 60ms
+ ✓ Compiled in 27ms
+ ✓ Compiled in 43ms
+ ✓ Compiled /optimize in 11ms
+ GET /optimize 200 in 67ms
+ GET /favicon.ico 200 in 217ms
+ GET /optimize 200 in 41ms
+ GET /favicon.ico 200 in 218ms
+ GET /optimize 200 in 31ms
+ GET /favicon.ico 200 in 215ms
+ GET /optimize 200 in 29ms
+ GET /favicon.ico 200 in 217ms
+ GET /upload 200 in 29ms
+ GET /favicon.ico 200 in 212ms
+ GET /upload 200 in 22ms
+ GET /upload 200 in 20ms
+ GET /favicon.ico 200 in 127ms
+ GET /upload 200 in 20ms
+ GET /favicon.ico 200 in 100ms
+ GET /upload 200 in 19ms
+ GET /favicon.ico 200 in 68ms
+ GET /favicon.ico 200 in 213ms
+ GET /upload 200 in 24ms
+ GET /favicon.ico 200 in 217ms
+ GET /upload 200 in 22ms
+ GET /favicon.ico 200 in 215ms
+ GET /upload 200 in 41ms
+ GET /favicon.ico 200 in 223ms
+ GET /optimize 200 in 46ms
+ GET /favicon.ico 200 in 245ms
+ GET /optimize 200 in 43ms
+ GET /favicon.ico 200 in 231ms
+ GET /upload 200 in 43ms
+ GET /favicon.ico 200 in 243ms
+ ✓ Compiled in 49ms
+ ✓ Compiled in 45ms

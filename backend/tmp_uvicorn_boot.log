@@ -1,0 +1,254 @@
+INFO:     Will watch for changes in these directories: ['/Users/kounoyousuke/warehouse-optimizer/backend']
+INFO:     Uvicorn running on http://127.0.0.1:8000 (Press CTRL+C to quit)
+INFO:     Started reloader process [13845] using StatReload
+INFO:     Started server process [13864]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+[main] Loaded env files: /Users/kounoyousuke/warehouse-optimizer/backend/.env, /Users/kounoyousuke/warehouse-optimizer/.env
+INFO:     127.0.0.1:50645 - "POST /v1/upload/sku HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50670 - "POST /v1/upload/sku HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50675 - "POST /v1/upload/recv_tx HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50675 - "POST /v1/upload/ship_tx HTTP/1.1" 200 OK
+inventory lot_date backfill failed
+Traceback (most recent call last):
+  File "/Users/kounoyousuke/warehouse-optimizer/backend/.venv/lib/python3.13/site-packages/sqlalchemy/engine/base.py", line 1967, in _exec_single_context
+    self.dialect.do_execute(
+    ~~~~~~~~~~~~~~~~~~~~~~~^
+        cursor, str_statement, effective_parameters, context
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "/Users/kounoyousuke/warehouse-optimizer/backend/.venv/lib/python3.13/site-packages/sqlalchemy/engine/default.py", line 951, in do_execute
+    cursor.execute(statement, parameters)
+    ~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^
+sqlite3.OperationalError: near "i": syntax error
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/Users/kounoyousuke/warehouse-optimizer/backend/app/routers/upload.py", line 1569, in upload_inventory
+    updated_cnt = _update_inventory_lot_dates(ses)
+  File "/Users/kounoyousuke/warehouse-optimizer/backend/app/routers/upload.py", line 608, in _update_inventory_lot_dates
+    result = session.exec(sql)
+  File "/Users/kounoyousuke/warehouse-optimizer/backend/app/models/__init__.py", line 85, in _compat_exec
+    res = _orig_exec(self, statement, *args, **kwargs)  # delegate first
+  File "/Users/kounoyousuke/warehouse-optimizer/backend/.venv/lib/python3.13/site-packages/sqlmodel/orm/session.py", line 83, in exec
+    results = super().execute(
+        statement,
+    ...<4 lines>...
+        _add_event=_add_event,
+    )
+  File "/Users/kounoyousuke/warehouse-optimizer/backend/.venv/lib/python3.13/site-packages/sqlalchemy/orm/session.py", line 2365, in execute
+    return self._execute_internal(
+           ~~~~~~~~~~~~~~~~~~~~~~^
+        statement,
+        ^^^^^^^^^^
+    ...<4 lines>...
+        _add_event=_add_event,
+        ^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "/Users/kounoyousuke/warehouse-optimizer/backend/.venv/lib/python3.13/site-packages/sqlalchemy/orm/session.py", line 2260, in _execute_internal
+    result = conn.execute(
+        statement, params or {}, execution_options=execution_options
+    )
+  File "/Users/kounoyousuke/warehouse-optimizer/backend/.venv/lib/python3.13/site-packages/sqlalchemy/engine/base.py", line 1419, in execute
+    return meth(
+        self,
+        distilled_parameters,
+        execution_options or NO_OPTIONS,
+    )
+  File "/Users/kounoyousuke/warehouse-optimizer/backend/.venv/lib/python3.13/site-packages/sqlalchemy/sql/elements.py", line 526, in _execute_on_connection
+    return connection._execute_clauseelement(
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^
+        self, distilled_params, execution_options
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "/Users/kounoyousuke/warehouse-optimizer/backend/.venv/lib/python3.13/site-packages/sqlalchemy/engine/base.py", line 1641, in _execute_clauseelement
+    ret = self._execute_context(
+        dialect,
+    ...<8 lines>...
+        cache_hit=cache_hit,
+    )
+  File "/Users/kounoyousuke/warehouse-optimizer/backend/.venv/lib/python3.13/site-packages/sqlalchemy/engine/base.py", line 1846, in _execute_context
+    return self._exec_single_context(
+           ~~~~~~~~~~~~~~~~~~~~~~~~~^
+        dialect, context, statement, parameters
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "/Users/kounoyousuke/warehouse-optimizer/backend/.venv/lib/python3.13/site-packages/sqlalchemy/engine/base.py", line 1986, in _exec_single_context
+    self._handle_dbapi_exception(
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~^
+        e, str_statement, effective_parameters, cursor, context
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "/Users/kounoyousuke/warehouse-optimizer/backend/.venv/lib/python3.13/site-packages/sqlalchemy/engine/base.py", line 2355, in _handle_dbapi_exception
+    raise sqlalchemy_exception.with_traceback(exc_info[2]) from e
+  File "/Users/kounoyousuke/warehouse-optimizer/backend/.venv/lib/python3.13/site-packages/sqlalchemy/engine/base.py", line 1967, in _exec_single_context
+    self.dialect.do_execute(
+    ~~~~~~~~~~~~~~~~~~~~~~~^
+        cursor, str_statement, effective_parameters, context
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "/Users/kounoyousuke/warehouse-optimizer/backend/.venv/lib/python3.13/site-packages/sqlalchemy/engine/default.py", line 951, in do_execute
+    cursor.execute(statement, parameters)
+    ~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^
+sqlalchemy.exc.OperationalError: (sqlite3.OperationalError) near "i": syntax error
+[SQL: 
+        UPDATE inventory i
+        SET lot_date = COALESCE(
+            CASE WHEN s.l8a IS NOT NULL THEN to_date(s.l8a, 'YYYYMMDD') END,
+            CASE WHEN s.l6a IS NOT NULL THEN to_date(s.l6a || '01', 'YYYYMMDD') END,
+            CASE WHEN s.l8  IS NOT NULL THEN to_date(s.l8,  'YYYYMMDD') END,
+            CASE WHEN s.l6  IS NOT NULL THEN to_date(s.l6  || '01', 'YYYYMMDD') END
+        )
+        FROM (
+            SELECT location_id, sku_id, pack_qty, lot,
+                   substring(lot FROM '(?i)[A-Z]+(20[0-9]{2}(0[1-9]|1[0-2])(0[1-9]|[12][0-9]|3[01]))') AS l8a,
+                   substring(lot FROM '(?i)[A-Z]+(20[0-9]{2}(0[1-9]|1[0-2]))')                       AS l6a,
+                   substring(lot FROM '(20[0-9]{2}(0[1-9]|1[0-2])(0[1-9]|[12][0-9]|3[01]))')        AS l8,
+                   substring(lot FROM '(20[0-9]{2}(0[1-9]|1[0-2]))')                                AS l6
+            FROM inventory
+        ) AS s
+        WHERE i.location_id = s.location_id
+          AND i.sku_id      = s.sku_id
+          AND i.pack_qty    = s.pack_qty
+          AND i.lot         = s.lot
+          AND i.lot_date IS NULL;
+        ]
+(Background on this error at: https://sqlalche.me/e/20/e3q8)
+INFO:     127.0.0.1:50675 - "POST /v1/upload/inventory HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50690 - "POST /v1/upload/location_master/valid HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50690 - "POST /v1/upload/location_master/invalid HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50690 - "POST /v1/upload/location_master/highness HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50690 - "GET /v1/debug/inventory?limit=500&offset=0 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50690 - "GET /v1/debug/inventory?limit=500&offset=500 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50690 - "GET /v1/debug/inventory?limit=500&offset=1000 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50690 - "GET /v1/debug/inventory?limit=500&offset=1500 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50690 - "GET /v1/debug/inventory?limit=500&offset=2000 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50690 - "GET /v1/debug/inventory?limit=500&offset=2500 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50690 - "GET /v1/debug/inventory?limit=500&offset=3000 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50690 - "GET /v1/debug/inventory?limit=500&offset=3500 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50690 - "GET /v1/debug/inventory?limit=500&offset=0 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50690 - "GET /v1/debug/inventory?limit=500&offset=500 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50690 - "GET /v1/debug/inventory?limit=500&offset=1000 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50690 - "GET /v1/debug/inventory?limit=500&offset=1500 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50690 - "GET /v1/debug/inventory?limit=500&offset=2000 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50690 - "GET /v1/debug/inventory?limit=500&offset=2500 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50690 - "GET /v1/debug/inventory?limit=500&offset=3000 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50690 - "GET /v1/debug/inventory?limit=500&offset=3500 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50690 - "GET /v1/debug/inventory?limit=500&offset=0 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50690 - "GET /v1/debug/inventory?limit=500&offset=500 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50690 - "GET /v1/debug/inventory?limit=500&offset=1000 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50690 - "GET /v1/debug/inventory?limit=500&offset=1500 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50690 - "GET /v1/debug/inventory?limit=500&offset=2000 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50690 - "GET /v1/debug/inventory?limit=500&offset=2500 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50690 - "GET /v1/debug/inventory?limit=500&offset=3000 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50690 - "GET /v1/debug/inventory?limit=500&offset=3500 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50690 - "OPTIONS /v1/upload/analysis/start HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50690 - "POST /v1/upload/analysis/start HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50699 - "GET /v1/debug/recv_tx?limit=500 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50690 - "GET /v1/debug/ship_tx?limit=500 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50709 - "GET /v1/debug/sku?limit=20&offset=0 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50709 - "GET /v1/debug/sku_metrics?limit=20&offset=0&window_days=90&sort=cases_per_day&order=desc HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50715 - "GET /v1/debug/inventory?limit=500&offset=0 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50715 - "GET /v1/debug/inventory?limit=500&offset=500 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50715 - "GET /v1/debug/inventory?limit=500&offset=1000 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50715 - "GET /v1/debug/inventory?limit=500&offset=1500 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50715 - "GET /v1/debug/inventory?limit=500&offset=2000 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50715 - "GET /v1/debug/inventory?limit=500&offset=2500 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50715 - "GET /v1/debug/inventory?limit=500&offset=3000 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50715 - "GET /v1/debug/inventory?limit=500&offset=3500 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50715 - "GET /v1/debug/inventory?limit=500&offset=0 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50715 - "GET /v1/debug/inventory?limit=500&offset=500 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50715 - "GET /v1/debug/inventory?limit=500&offset=1000 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50715 - "GET /v1/debug/inventory?limit=500&offset=1500 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50715 - "GET /v1/debug/inventory?limit=500&offset=2000 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50715 - "GET /v1/debug/inventory?limit=500&offset=2500 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50715 - "GET /v1/debug/inventory?limit=500&offset=3000 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50715 - "GET /v1/debug/inventory?limit=500&offset=3500 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50715 - "GET /v1/debug/inventory?limit=500&offset=0 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50715 - "GET /v1/debug/inventory?limit=500&offset=500 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50715 - "GET /v1/debug/inventory?limit=500&offset=1000 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50715 - "GET /v1/debug/inventory?limit=500&offset=1500 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50715 - "GET /v1/debug/inventory?limit=500&offset=2000 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50715 - "GET /v1/debug/inventory?limit=500&offset=2500 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50715 - "GET /v1/debug/inventory?limit=500&offset=3000 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50715 - "GET /v1/debug/inventory?limit=500&offset=3500 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50715 - "POST /v1/upload/analysis/start HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50717 - "GET /v1/debug/recv_tx?limit=500 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50715 - "GET /v1/debug/ship_tx?limit=500 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50755 - "GET /v1/debug/sku_metrics?window_days=99999&limit=5 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50773 - "GET /v1/debug/ship_tx?limit=1 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50774 - "GET /v1/debug/recv_tx?limit=1 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50784 - "GET /v1/debug/inventory?limit=500&offset=0 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50784 - "GET /v1/debug/inventory?limit=500&offset=500 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50784 - "GET /v1/debug/inventory?limit=500&offset=1000 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50784 - "GET /v1/debug/inventory?limit=500&offset=1500 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50784 - "GET /v1/debug/inventory?limit=500&offset=2000 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50784 - "GET /v1/debug/inventory?limit=500&offset=2500 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50784 - "GET /v1/debug/inventory?limit=500&offset=3000 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50784 - "GET /v1/debug/inventory?limit=500&offset=3500 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50784 - "GET /v1/debug/inventory?limit=500&offset=0 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50784 - "GET /v1/debug/inventory?limit=500&offset=500 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50784 - "GET /v1/debug/inventory?limit=500&offset=1000 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50784 - "GET /v1/debug/inventory?limit=500&offset=1500 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50784 - "GET /v1/debug/inventory?limit=500&offset=2000 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50784 - "GET /v1/debug/inventory?limit=500&offset=2500 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50784 - "GET /v1/debug/inventory?limit=500&offset=3000 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50784 - "GET /v1/debug/inventory?limit=500&offset=3500 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50792 - "GET /v1/debug/inventory?limit=500&offset=0 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50791 - "POST /v1/upload/analysis/start HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50791 - "GET /v1/debug/sku_metrics?window_days=90&limit=500&offset=0 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50792 - "GET /v1/debug/inventory?limit=500&offset=500 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50791 - "GET /v1/debug/sku_metrics?window_days=90&limit=500&offset=500 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50792 - "GET /v1/debug/inventory?limit=500&offset=1000 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50791 - "GET /v1/debug/sku_metrics?window_days=90&limit=500&offset=1000 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50792 - "GET /v1/debug/inventory?limit=500&offset=1500 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50791 - "GET /v1/debug/sku_metrics?window_days=90&limit=500&offset=1500 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50792 - "GET /v1/debug/inventory?limit=500&offset=2000 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50791 - "GET /v1/debug/sku_metrics?window_days=90&limit=500&offset=2000 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50792 - "GET /v1/debug/inventory?limit=500&offset=2500 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50791 - "GET /v1/debug/sku_metrics?window_days=90&limit=500&offset=2500 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50792 - "GET /v1/debug/inventory?limit=500&offset=3000 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50791 - "GET /v1/debug/sku_metrics?window_days=90&limit=500&offset=3000 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50792 - "GET /v1/debug/inventory?limit=500&offset=3500 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50791 - "GET /v1/debug/inventory?limit=500&offset=0 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50794 - "GET /v1/debug/inventory?limit=500&offset=0 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50791 - "GET /v1/debug/inventory?limit=500&offset=500 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50792 - "POST /v1/upload/analysis/start HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50794 - "GET /v1/debug/inventory?limit=500&offset=500 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50791 - "GET /v1/debug/sku_metrics?window_days=90&limit=500&offset=0&quality_names=%E8%89%AF%E5%93%81 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50792 - "GET /v1/debug/inventory?limit=500&offset=1000 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50791 - "GET /v1/debug/sku_metrics?window_days=90&limit=500&offset=500&quality_names=%E8%89%AF%E5%93%81 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50794 - "GET /v1/debug/inventory?limit=500&offset=1000 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50792 - "GET /v1/debug/inventory?limit=500&offset=1500 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50791 - "GET /v1/debug/sku_metrics?window_days=90&limit=500&offset=1000&quality_names=%E8%89%AF%E5%93%81 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50794 - "GET /v1/debug/inventory?limit=500&offset=1500 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50792 - "GET /v1/debug/inventory?limit=500&offset=2000 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50791 - "GET /v1/debug/sku_metrics?window_days=90&limit=500&offset=1500&quality_names=%E8%89%AF%E5%93%81 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50794 - "GET /v1/debug/inventory?limit=500&offset=2000 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50792 - "GET /v1/debug/inventory?limit=500&offset=2500 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50791 - "GET /v1/debug/sku_metrics?window_days=90&limit=500&offset=2000&quality_names=%E8%89%AF%E5%93%81 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50794 - "GET /v1/debug/inventory?limit=500&offset=2500 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50792 - "GET /v1/debug/inventory?limit=500&offset=3000 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50791 - "GET /v1/debug/sku_metrics?window_days=90&limit=500&offset=2500&quality_names=%E8%89%AF%E5%93%81 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50794 - "GET /v1/debug/inventory?limit=500&offset=3000 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50792 - "GET /v1/debug/inventory?limit=500&offset=3500 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50791 - "GET /v1/debug/sku_metrics?window_days=90&limit=500&offset=3000&quality_names=%E8%89%AF%E5%93%81 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50794 - "GET /v1/debug/inventory?limit=500&offset=3500 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50792 - "GET /v1/debug/locations?limit=500&offset=0 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50791 - "GET /v1/debug/inventory?limit=500&offset=0 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50791 - "GET /v1/debug/inventory?limit=500&offset=500 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50791 - "GET /v1/debug/inventory?limit=500&offset=1000 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50791 - "GET /v1/debug/inventory?limit=500&offset=1500 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50791 - "GET /v1/debug/inventory?limit=500&offset=2000 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50791 - "GET /v1/debug/inventory?limit=500&offset=2500 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50791 - "GET /v1/debug/inventory?limit=500&offset=3000 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50791 - "GET /v1/debug/inventory?limit=500&offset=3500 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50791 - "GET /v1/debug/locations?limit=500&offset=0 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50862 - "GET /v1/debug/sku_metrics?window_days=99999&limit=10&offset=0 HTTP/1.1" 200 OK

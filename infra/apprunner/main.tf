@@ -48,12 +48,11 @@ resource "aws_iam_role_policy_attachment" "apprunner_ecr" {
   policy_arn = "arn:aws:iam::aws:policy/service-role/AWSAppRunnerServicePolicyForECRAccess"
 }
 
-# App Runner - ECR に latest イメージプッシュ後に作成可能
 resource "aws_apprunner_service" "backend" {
   service_name = local.app_name
 
   source_configuration {
-    auto_deployments_enabled = true  # ECR latest更新時に自動デプロイ
+    auto_deployments_enabled = true
     authentication_configuration {
       access_role_arn = aws_iam_role.apprunner_ecr_access.arn
     }
@@ -64,7 +63,6 @@ resource "aws_apprunner_service" "backend" {
         port = "8000"
         runtime_environment_variables = {
           ENV = "production"
-          DATABASE_URL = var.enable_private_rds ? "postgresql+psycopg2://${var.rds_master_username}:${var.rds_master_password}@${aws_rds_cluster.postgres[0].endpoint}:5432/${var.rds_db_name}" : ""
         }
       }
     }
@@ -84,15 +82,10 @@ resource "aws_apprunner_service" "backend" {
     unhealthy_threshold = 5
   }
 
-  # B案(Private RDS)のときのみ VPC Connector を有効化
-  dynamic "network_configuration" {
-    for_each = var.enable_private_rds ? [1] : []
-    content {
-      egress_configuration {
-        egress_type       = "VPC"
-        vpc_connector_arn = aws_apprunner_vpc_connector.this[0].arn
-      }
-    }
+  # VPC Connector を使用してプライベートRDSへ接続
+  network_configuration {
+    egress_type        = "VPC"
+    vpc_connector_arn  = aws_apprunner_vpc_connector.this.arn
   }
 }
 
@@ -109,5 +102,5 @@ output "apprunner_service_url" {
 }
 
 output "apprunner_vpc_connector_arn" {
-  value = var.enable_private_rds ? aws_apprunner_vpc_connector.this[0].arn : null
+  value = aws_apprunner_vpc_connector.this.arn
 }

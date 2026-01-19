@@ -29,6 +29,9 @@ class Inventory(SQLModel, table=True):
     # 数量（単位: 個）
     qty: int = Field(default=0, description="在庫数(引当数を含む)")
 
+    # 引当数（単位: 個）— 作業対象から除外するためのフラグ用。無ければ0扱い。
+    allocated_qty: Optional[int] = Field(default=0, description="引当数（確保済みの数量）")
+
     # 位置（アップロード時にロケーションを分解して保存）
     level: Optional[int] = Field(default=None, index=True, description="段(1=最下段)")
     column: Optional[int] = Field(default=None, index=True, description="列(入口側が若番)")

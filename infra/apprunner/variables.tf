@@ -31,17 +31,6 @@ variable "instance_memory" {
 # -----------------------------
 # Networking & RDS (B案用)
 # -----------------------------
-variable "enable_private_rds" {
-  description = "Enable VPC + Private RDS (option B). If false, use public RDS (option A)."
-  type        = bool
-  default     = true
-}
-
-variable "enable_public_rds" {
-  description = "Create public RDS (option A)."
-  type        = bool
-  default     = false
-}
 variable "vpc_cidr" {
   description = "VPC CIDR"
   type        = string
@@ -69,7 +58,7 @@ variable "az_a" {
 variable "rds_engine_version" {
   description = "Aurora PostgreSQL engine version"
   type        = string
-  default     = "15.13"
+  default     = "15.4"
 }
 
 variable "rds_instance_class" {

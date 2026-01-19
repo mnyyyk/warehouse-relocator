@@ -1,0 +1,820 @@
+INFO:     Will watch for changes in these directories: ['/Users/kounoyousuke/warehouse-optimizer']
+INFO:     Uvicorn running on http://127.0.0.1:8000 (Press CTRL+C to quit)
+INFO:     Started reloader process [94396] using StatReload
+[DEBUG] sitecustomize imported
+[DEBUG] sitecustomize imported
+INFO:     Started server process [94398]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+[DEBUG] sitecustomize imported
+[main] Loaded env files: /Users/kounoyousuke/warehouse-optimizer/backend/.env, /Users/kounoyousuke/warehouse-optimizer/.env
+INFO:     127.0.0.1:62174 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62205 - "GET /v1/debug/inventory?limit=500&offset=0 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62205 - "GET /v1/debug/inventory?limit=500&offset=500 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62205 - "GET /v1/debug/inventory?limit=500&offset=1000 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62205 - "GET /v1/debug/inventory?limit=500&offset=1500 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62205 - "GET /v1/debug/inventory?limit=500&offset=2000 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62205 - "GET /v1/debug/inventory?limit=500&offset=2500 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62205 - "GET /v1/debug/inventory?limit=500&offset=3000 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62205 - "GET /v1/debug/inventory?limit=500&offset=3500 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62205 - "GET /v1/debug/inventory?limit=500&offset=4000 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62205 - "GET /v1/debug/inventory?limit=500&offset=4500 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62205 - "GET /v1/debug/inventory?limit=500&offset=5000 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62205 - "GET /v1/debug/inventory?limit=500&offset=5500 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62205 - "GET /v1/debug/inventory?limit=500&offset=0 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62205 - "GET /v1/debug/inventory?limit=500&offset=500 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62205 - "GET /v1/debug/inventory?limit=500&offset=1000 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62205 - "GET /v1/debug/inventory?limit=500&offset=1500 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62205 - "GET /v1/debug/inventory?limit=500&offset=2000 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62205 - "GET /v1/debug/inventory?limit=500&offset=2500 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62205 - "GET /v1/debug/inventory?limit=500&offset=3000 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62205 - "GET /v1/debug/inventory?limit=500&offset=3500 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62205 - "GET /v1/debug/inventory?limit=500&offset=4000 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62205 - "GET /v1/debug/inventory?limit=500&offset=4500 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62205 - "GET /v1/debug/inventory?limit=500&offset=5000 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62205 - "GET /v1/debug/inventory?limit=500&offset=5500 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62208 - "GET /v1/upload/relocation/stream?trace_id=248ecb4fc266 HTTP/1.1" 200 OK
+[optimizer] location_master provided: slots=198 receivable=198 (filtered from 198)
+[optimizer] sku_master cols=['商品ID', '入数', 'volume_m3', '商品予備項目００６'] rows=3240
+[optimizer] after block_filter=None rows=3251
+[optimizer] after quality_filter=None rows=3251
+[optimizer] carton_volume_map size=3240
+[optimizer] Sample locations before parse: ['00100103', '00100108', '00100201', '00100202', '00100202']
+[optimizer] Location dtype: object
+[optimizer] Sample locations after parse: ['00100103', '00100108', '00100201', '00100202', '00100202']
+[optimizer] qty_cases_move min=1 max=149
+[optimizer] dominant_pack_by_col keys=41 thr=0.7
+[optimizer] shelf_usage locations=584 (cap=1.1700000000000002)
+[Pass-1] total=425, has_volume=425, has_lot=424, unknown_lot_key=99999999
+[Pass-1] subset size after filter: 424
+[Pass-1] Summary: groups=372, with_moves=12, total_moves=12
+[optimizer] pass1_pick_storage_balance (with swap) moves=12
+[optimizer] Pass-1 pick/storage: candidates=12 time=0.22s
+[optimizer] pass0_area_rebalance moves=31
+[optimizer] Pass-0 area_rebalance: candidates=31 time=0.03s
+[optimizer] Total candidates collected: 43
+[optimizer] About to sort 43 candidates...
+[optimizer] Processing candidate 0/43...
+[optimizer] Created moves_with_meta with 43 entries, now sorting...
+[optimizer] Sorting complete
+[optimizer] max_moves=50, total_candidates=43
+[optimizer] After selection: len(moves)=43
+[optimizer] Final move selection: Pass-1=4, Pass-0=14, total=43
+[optimizer] First 5 selected moves:
+  [0] priority=1, sku=A3936N11-71, from=00303026, to=00103004, reason=古ロット(Lot:2025/04/24)→取口Lv1 & 手前化(奥26→4) → 先入先出徹底、取り出し容易化
+  [1] priority=1, sku=A3035Z51, from=00302905, to=00102911, reason=古ロット(Lot:2025/04/22)→取口Lv1 → 先入先出徹底
+  [2] priority=1, sku=A3937N21, from=00302909, to=00102912, reason=古ロット(Lot:2025/05/30)→取口Lv1 → 先入先出徹底
+  [3] priority=1, sku=A82E2N22, from=00303102, to=00103102, reason=古ロット(Lot:2025/03/28)→取口Lv1 → 先入先出徹底
+  [4] priority=2, sku=A1680N22, from=00204112, to=00203001, reason=エリア移動(列41→30) → エリア内バランス
+[optimizer] Pre-cached 4 levels with locations
+[optimizer] Pass-2 completed: 32 moves in 1.40s, total=50
+[optimizer] Pass-3 AI optimization: moves=0 time=0.00s total=50
+[optimizer] planned moves=50 (limit=50)
+[optimizer] Auto-enforce is enabled, starting constraint enforcement
+[optimizer] Calling enforce_constraints with 50 moves
+[optimizer] constraints accepted=50/50; rejects: oversize=0, forbidden=0, capacity=0, fifo=0, pack_band=0, other=0
+[optimizer] enforce_constraints completed: 50 accepted out of 50
+[optimizer] Generating summary report: accepted=50, rejected=0
+[_generate_relocation_summary] Starting: moves=50, rejected=0
+[_generate_relocation_summary] Completed: keys=['total_planned', 'pass_stats', 'total_rejected', 'total_accepted', 'affected_skus', 'from_locations', 'to_locations', 'total_cases', 'sku_consolidation', 'lot_mixing_issues', 'lot_mixing_details', 'reason_breakdown', 'old_lot_to_pick_count', 'hotspot_moves_count', 'hotspot_criteria', 'recommendations', 'move_rate_percent']
+[optimizer] Summary report generated: ['total_planned', 'pass_stats', 'total_rejected', 'total_accepted', 'affected_skus', 'from_locations', 'to_locations', 'total_cases', 'sku_consolidation', 'lot_mixing_issues', 'lot_mixing_details', 'reason_breakdown', 'old_lot_to_pick_count', 'hotspot_moves_count', 'hotspot_criteria', 'recommendations', 'move_rate_percent']
+[optimizer] Report formatted, 48 lines
+[optimizer] Summary Report:
+======================================================================
+📊 リロケーション結果の総合評価
+======================================================================
+
+【実施結果】
+  計画移動数: 50 件
+  承認移動数: 50 件
+  却下移動数: 0 件
+  移動率: 11.8%
+  影響SKU数: 34 種類
+  総ケース数: 1,020 ケース
+
+【最適化効果】
+  ▶ Pass毎の改善 (実行順):
+    • Pass-1 (取口/保管整列) 【最優先】: 4件
+      → 同一SKU内で古いロットを取り口へ、新しいロットを保管段へ
+    • Pass-0 (エリア再配置) 【第2優先】: 14件
+      → 入数帯の是正、適切な列への移動
+    • Pass-2 (圧縮/集約) 【第3優先】: 32件
+      → SKU集約、下段優先配置、動線最適化
+
+  📦 古いロット→取り口ロケ: 8 件
+     (同一SKU内で相対的に古いロットをレベル1-2へ移動)
+  🔥 高出荷SKU→ホットスポット: なし
+
+  ▶ 移動理由別の内訳:
+    • 取口内整列(Lv2: 8件
+    • 入口接近(列7: 4件
+    • エリア移動(列41: 3件
+    • エリア移動(列37: 3件
+    • エリア移動(列36: 3件
+    • 入口接近(列3: 3件
+    • 入口接近(列11: 3件
+    • エリア移動(列40: 2件
+    • 入口接近(列5: 2件
+    • 容量確保退避(連鎖深度0): 2件
+
+【SKU集約状況】
+  A82E2N12: ⚠️ 4→5ロケ (分散)
+     移動前 (4ロケ): 00102316, 00102625, 00102913, 00203719
+     移動後 (5ロケ): 00102316, 00102625, 00102912, 00102913, 00203719
+【ハードルール検証】
+  ✅ ロット混在なし
+
+【推奨事項】
+  • ✅ 古いロット8件を取り口ロケ(Lv1)へ移動 - FIFO回転促進
+
+======================================================================
+[_publish_progress] Publishing summary_report to trace_id=248ecb4fc266
+[_publish_progress] Payload keys: ['type', 'report', 'data', 'message', 'ts']
+[_publish_progress] Report length: 1063
+[_publish_progress] Subscribers count: 1
+[optimizer] Summary report published via SSE
+INFO:     127.0.0.1:62205 - "POST /v1/upload/relocation/start HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62205 - "GET /v1/upload/relocation/debug?trace_id=248ecb4fc266 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62214 - "OPTIONS /v1/upload/relocation/start/final-moves HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62216 - "GET /v1/upload/relocation/debug HTTP/1.1" 200 OK
+[optimizer] location_master provided: slots=198 receivable=198 (filtered from 198)
+[optimizer] sku_master cols=['商品ID', '入数', 'volume_m3', '商品予備項目００６'] rows=3240
+[optimizer] after block_filter=None rows=3251
+[optimizer] after quality_filter=None rows=3251
+[optimizer] carton_volume_map size=3240
+[optimizer] Sample locations before parse: ['00100103', '00100108', '00100201', '00100202', '00100202']
+[optimizer] Location dtype: object
+[optimizer] Sample locations after parse: ['00100103', '00100108', '00100201', '00100202', '00100202']
+[optimizer] qty_cases_move min=1 max=149
+[optimizer] dominant_pack_by_col keys=41 thr=0.7
+[optimizer] shelf_usage locations=584 (cap=1.1700000000000002)
+[Pass-1] total=425, has_volume=425, has_lot=424, unknown_lot_key=99999999
+[Pass-1] subset size after filter: 424
+[Pass-1] Summary: groups=372, with_moves=12, total_moves=12
+[optimizer] pass1_pick_storage_balance (with swap) moves=12
+[optimizer] Pass-1 pick/storage: candidates=12 time=0.21s
+[optimizer] pass0_area_rebalance moves=31
+[optimizer] Pass-0 area_rebalance: candidates=31 time=0.03s
+[optimizer] Total candidates collected: 43
+[optimizer] About to sort 43 candidates...
+[optimizer] Processing candidate 0/43...
+[optimizer] Created moves_with_meta with 43 entries, now sorting...
+[optimizer] Sorting complete
+[optimizer] max_moves=50, total_candidates=43
+[optimizer] After selection: len(moves)=43
+[optimizer] Final move selection: Pass-1=4, Pass-0=14, total=43
+[optimizer] First 5 selected moves:
+  [0] priority=1, sku=A3936N11-71, from=00303026, to=00103004, reason=古ロット(Lot:2025/04/24)→取口Lv1 & 手前化(奥26→4) → 先入先出徹底、取り出し容易化
+  [1] priority=1, sku=A3035Z51, from=00302905, to=00102911, reason=古ロット(Lot:2025/04/22)→取口Lv1 → 先入先出徹底
+  [2] priority=1, sku=A3937N21, from=00302909, to=00102912, reason=古ロット(Lot:2025/05/30)→取口Lv1 → 先入先出徹底
+  [3] priority=1, sku=A82E2N22, from=00303102, to=00103102, reason=古ロット(Lot:2025/03/28)→取口Lv1 → 先入先出徹底
+  [4] priority=2, sku=A1680N22, from=00204112, to=00203001, reason=エリア移動(列41→30) → エリア内バランス
+[optimizer] Pre-cached 4 levels with locations
+[optimizer] Pass-2 completed: 32 moves in 1.41s, total=50
+[optimizer] Pass-3 AI optimization: moves=0 time=0.00s total=50
+[optimizer] planned moves=50 (limit=50)
+[optimizer] Auto-enforce is enabled, starting constraint enforcement
+[optimizer] Calling enforce_constraints with 50 moves
+[optimizer] constraints accepted=50/50; rejects: oversize=0, forbidden=0, capacity=0, fifo=0, pack_band=0, other=0
+[optimizer] enforce_constraints completed: 50 accepted out of 50
+[optimizer] Generating summary report: accepted=50, rejected=0
+[_generate_relocation_summary] Starting: moves=50, rejected=0
+[_generate_relocation_summary] Completed: keys=['total_planned', 'pass_stats', 'total_rejected', 'total_accepted', 'affected_skus', 'from_locations', 'to_locations', 'total_cases', 'sku_consolidation', 'lot_mixing_issues', 'lot_mixing_details', 'reason_breakdown', 'old_lot_to_pick_count', 'hotspot_moves_count', 'hotspot_criteria', 'recommendations', 'move_rate_percent']
+[optimizer] Summary report generated: ['total_planned', 'pass_stats', 'total_rejected', 'total_accepted', 'affected_skus', 'from_locations', 'to_locations', 'total_cases', 'sku_consolidation', 'lot_mixing_issues', 'lot_mixing_details', 'reason_breakdown', 'old_lot_to_pick_count', 'hotspot_moves_count', 'hotspot_criteria', 'recommendations', 'move_rate_percent']
+[optimizer] Report formatted, 48 lines
+[optimizer] Summary Report:
+======================================================================
+📊 リロケーション結果の総合評価
+======================================================================
+
+【実施結果】
+  計画移動数: 50 件
+  承認移動数: 50 件
+  却下移動数: 0 件
+  移動率: 11.8%
+  影響SKU数: 34 種類
+  総ケース数: 1,020 ケース
+
+【最適化効果】
+  ▶ Pass毎の改善 (実行順):
+    • Pass-1 (取口/保管整列) 【最優先】: 4件
+      → 同一SKU内で古いロットを取り口へ、新しいロットを保管段へ
+    • Pass-0 (エリア再配置) 【第2優先】: 14件
+      → 入数帯の是正、適切な列への移動
+    • Pass-2 (圧縮/集約) 【第3優先】: 32件
+      → SKU集約、下段優先配置、動線最適化
+
+  📦 古いロット→取り口ロケ: 8 件
+     (同一SKU内で相対的に古いロットをレベル1-2へ移動)
+  🔥 高出荷SKU→ホットスポット: なし
+
+  ▶ 移動理由別の内訳:
+    • 取口内整列(Lv2: 8件
+    • 入口接近(列7: 4件
+    • エリア移動(列41: 3件
+    • エリア移動(列37: 3件
+    • エリア移動(列36: 3件
+    • 入口接近(列3: 3件
+    • 入口接近(列11: 3件
+    • エリア移動(列40: 2件
+    • 入口接近(列5: 2件
+    • 容量確保退避(連鎖深度0): 2件
+
+【SKU集約状況】
+  A82E2N12: ⚠️ 4→5ロケ (分散)
+     移動前 (4ロケ): 00102316, 00102625, 00102913, 00203719
+     移動後 (5ロケ): 00102316, 00102625, 00102912, 00102913, 00203719
+【ハードルール検証】
+  ✅ ロット混在なし
+
+【推奨事項】
+  • ✅ 古いロット8件を取り口ロケ(Lv1)へ移動 - FIFO回転促進
+
+======================================================================
+[_publish_progress] Publishing summary_report to trace_id=b7e0e45de0e5
+[_publish_progress] Payload keys: ['type', 'report', 'data', 'message', 'ts']
+[_publish_progress] Report length: 1063
+[_publish_progress] Subscribers count: 0
+[optimizer] Summary report published via SSE
+INFO:     127.0.0.1:62214 - "POST /v1/upload/relocation/start/final-moves HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62214 - "GET /v1/upload/relocation/debug HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62251 - "GET /v1/debug/inventory?limit=500&offset=0 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62251 - "GET /v1/debug/inventory?limit=500&offset=500 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62251 - "GET /v1/debug/inventory?limit=500&offset=1000 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62251 - "GET /v1/debug/inventory?limit=500&offset=1500 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62251 - "GET /v1/debug/inventory?limit=500&offset=2000 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62251 - "GET /v1/debug/inventory?limit=500&offset=2500 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62251 - "GET /v1/debug/inventory?limit=500&offset=3000 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62251 - "GET /v1/debug/inventory?limit=500&offset=3500 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62251 - "GET /v1/debug/inventory?limit=500&offset=4000 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62251 - "GET /v1/debug/inventory?limit=500&offset=4500 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62251 - "GET /v1/debug/inventory?limit=500&offset=5000 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62251 - "GET /v1/debug/inventory?limit=500&offset=5500 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62399 - "GET /v1/upload/relocation/debug HTTP/1.1" 200 OK
+[optimizer] location_master provided: slots=198 receivable=198 (filtered from 198)
+[optimizer] sku_master cols=['商品ID', '入数', 'volume_m3', '商品予備項目００６'] rows=3240
+[optimizer] after block_filter=None rows=3251
+[optimizer] after quality_filter=None rows=3251
+[optimizer] carton_volume_map size=3240
+[optimizer] Sample locations before parse: ['00100103', '00100108', '00100201', '00100202', '00100202']
+[optimizer] Location dtype: object
+[optimizer] Sample locations after parse: ['00100103', '00100108', '00100201', '00100202', '00100202']
+[optimizer] qty_cases_move min=1 max=149
+[optimizer] dominant_pack_by_col keys=41 thr=0.7
+[optimizer] shelf_usage locations=584 (cap=1.1700000000000002)
+[Pass-1] total=425, has_volume=425, has_lot=424, unknown_lot_key=99999999
+[Pass-1] subset size after filter: 424
+[Pass-1] Summary: groups=372, with_moves=12, total_moves=12
+[optimizer] pass1_pick_storage_balance (with swap) moves=12
+[optimizer] Pass-1 pick/storage: candidates=12 time=0.21s
+[optimizer] pass0_area_rebalance moves=31
+[optimizer] Pass-0 area_rebalance: candidates=31 time=0.03s
+[optimizer] Total candidates collected: 43
+[optimizer] About to sort 43 candidates...
+[optimizer] Processing candidate 0/43...
+[optimizer] Created moves_with_meta with 43 entries, now sorting...
+[optimizer] Sorting complete
+[optimizer] max_moves=50, total_candidates=43
+[optimizer] After selection: len(moves)=43
+[optimizer] Final move selection: Pass-1=4, Pass-0=14, total=43
+[optimizer] First 5 selected moves:
+  [0] priority=1, sku=A3936N11-71, from=00303026, to=00103004, reason=古ロット(Lot:2025/04/24)→取口Lv1 & 手前化(奥26→4) → 先入先出徹底、取り出し容易化
+  [1] priority=1, sku=A3035Z51, from=00302905, to=00102911, reason=古ロット(Lot:2025/04/22)→取口Lv1 → 先入先出徹底
+  [2] priority=1, sku=A3937N21, from=00302909, to=00102912, reason=古ロット(Lot:2025/05/30)→取口Lv1 → 先入先出徹底
+  [3] priority=1, sku=A82E2N22, from=00303102, to=00103102, reason=古ロット(Lot:2025/03/28)→取口Lv1 → 先入先出徹底
+  [4] priority=2, sku=A1680N22, from=00204112, to=00203001, reason=エリア移動(列41→30) → エリア内バランス
+[optimizer] Pre-cached 4 levels with locations
+[optimizer] Pass-2 completed: 32 moves in 1.38s, total=50
+[optimizer] Pass-3 AI optimization: moves=0 time=0.00s total=50
+[optimizer] planned moves=50 (limit=50)
+[optimizer] Auto-enforce is enabled, starting constraint enforcement
+[optimizer] Calling enforce_constraints with 50 moves
+[optimizer] constraints accepted=50/50; rejects: oversize=0, forbidden=0, capacity=0, fifo=0, pack_band=0, other=0
+[optimizer] enforce_constraints completed: 50 accepted out of 50
+[optimizer] Generating summary report: accepted=50, rejected=0
+[_generate_relocation_summary] Starting: moves=50, rejected=0
+[_generate_relocation_summary] Completed: keys=['total_planned', 'pass_stats', 'total_rejected', 'total_accepted', 'affected_skus', 'from_locations', 'to_locations', 'total_cases', 'sku_consolidation', 'lot_mixing_issues', 'lot_mixing_details', 'reason_breakdown', 'old_lot_to_pick_count', 'hotspot_moves_count', 'hotspot_criteria', 'recommendations', 'move_rate_percent']
+[optimizer] Summary report generated: ['total_planned', 'pass_stats', 'total_rejected', 'total_accepted', 'affected_skus', 'from_locations', 'to_locations', 'total_cases', 'sku_consolidation', 'lot_mixing_issues', 'lot_mixing_details', 'reason_breakdown', 'old_lot_to_pick_count', 'hotspot_moves_count', 'hotspot_criteria', 'recommendations', 'move_rate_percent']
+[optimizer] Report formatted, 48 lines
+[optimizer] Summary Report:
+======================================================================
+📊 リロケーション結果の総合評価
+======================================================================
+
+【実施結果】
+  計画移動数: 50 件
+  承認移動数: 50 件
+  却下移動数: 0 件
+  移動率: 11.8%
+  影響SKU数: 34 種類
+  総ケース数: 1,020 ケース
+
+【最適化効果】
+  ▶ Pass毎の改善 (実行順):
+    • Pass-1 (取口/保管整列) 【最優先】: 4件
+      → 同一SKU内で古いロットを取り口へ、新しいロットを保管段へ
+    • Pass-0 (エリア再配置) 【第2優先】: 14件
+      → 入数帯の是正、適切な列への移動
+    • Pass-2 (圧縮/集約) 【第3優先】: 32件
+      → SKU集約、下段優先配置、動線最適化
+
+  📦 古いロット→取り口ロケ: 8 件
+     (同一SKU内で相対的に古いロットをレベル1-2へ移動)
+  🔥 高出荷SKU→ホットスポット: なし
+
+  ▶ 移動理由別の内訳:
+    • 取口内整列(Lv2: 8件
+    • 入口接近(列7: 4件
+    • エリア移動(列41: 3件
+    • エリア移動(列37: 3件
+    • エリア移動(列36: 3件
+    • 入口接近(列3: 3件
+    • 入口接近(列11: 3件
+    • エリア移動(列40: 2件
+    • 入口接近(列5: 2件
+    • 容量確保退避(連鎖深度0): 2件
+
+【SKU集約状況】
+  A82E2N12: ⚠️ 4→5ロケ (分散)
+     移動前 (4ロケ): 00102316, 00102625, 00102913, 00203719
+     移動後 (5ロケ): 00102316, 00102625, 00102912, 00102913, 00203719
+【ハードルール検証】
+  ✅ ロット混在なし
+
+【推奨事項】
+  • ✅ 古いロット8件を取り口ロケ(Lv1)へ移動 - FIFO回転促進
+
+======================================================================
+[_publish_progress] Publishing summary_report to trace_id=b28cc3c72a4f
+[_publish_progress] Payload keys: ['type', 'report', 'data', 'message', 'ts']
+[_publish_progress] Report length: 1063
+[_publish_progress] Subscribers count: 0
+[optimizer] Summary report published via SSE
+INFO:     127.0.0.1:62397 - "POST /v1/upload/relocation/start/final-moves HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62401 - "GET /v1/upload/relocation/debug HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62401 - "GET /v1/debug/inventory?limit=500&offset=0 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62401 - "GET /v1/debug/inventory?limit=500&offset=500 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62401 - "GET /v1/debug/inventory?limit=500&offset=1000 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62401 - "GET /v1/debug/inventory?limit=500&offset=1500 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62401 - "GET /v1/debug/inventory?limit=500&offset=2000 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62401 - "GET /v1/debug/inventory?limit=500&offset=2500 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62401 - "GET /v1/debug/inventory?limit=500&offset=3000 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62401 - "GET /v1/debug/inventory?limit=500&offset=3500 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62401 - "GET /v1/debug/inventory?limit=500&offset=4000 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62401 - "GET /v1/debug/inventory?limit=500&offset=4500 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62401 - "GET /v1/debug/inventory?limit=500&offset=5000 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62401 - "GET /v1/debug/inventory?limit=500&offset=5500 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62401 - "GET /v1/debug/inventory?limit=500&offset=0 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62401 - "GET /v1/debug/inventory?limit=500&offset=500 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62401 - "GET /v1/debug/inventory?limit=500&offset=1000 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62401 - "GET /v1/debug/inventory?limit=500&offset=1500 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62401 - "GET /v1/debug/inventory?limit=500&offset=2000 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62401 - "GET /v1/debug/inventory?limit=500&offset=2500 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62401 - "GET /v1/debug/inventory?limit=500&offset=3000 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62401 - "GET /v1/debug/inventory?limit=500&offset=3500 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62401 - "GET /v1/debug/inventory?limit=500&offset=4000 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62401 - "GET /v1/debug/inventory?limit=500&offset=4500 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62401 - "GET /v1/debug/inventory?limit=500&offset=5000 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62401 - "GET /v1/debug/inventory?limit=500&offset=5500 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62418 - "GET /v1/upload/relocation/stream?trace_id=d5a5db341c47 HTTP/1.1" 200 OK
+[optimizer] location_master provided: slots=198 receivable=198 (filtered from 198)
+[optimizer] sku_master cols=['商品ID', '入数', 'volume_m3', '商品予備項目００６'] rows=3240
+[optimizer] after block_filter=None rows=3251
+[optimizer] after quality_filter=None rows=3251
+[optimizer] carton_volume_map size=3240
+[optimizer] Sample locations before parse: ['00100103', '00100108', '00100201', '00100202', '00100202']
+[optimizer] Location dtype: object
+[optimizer] Sample locations after parse: ['00100103', '00100108', '00100201', '00100202', '00100202']
+[optimizer] qty_cases_move min=1 max=149
+[optimizer] dominant_pack_by_col keys=41 thr=0.7
+[optimizer] shelf_usage locations=584 (cap=1.1700000000000002)
+[Pass-1] total=425, has_volume=425, has_lot=424, unknown_lot_key=99999999
+[Pass-1] subset size after filter: 424
+[Pass-1] Summary: groups=372, with_moves=12, total_moves=12
+[optimizer] pass1_pick_storage_balance (with swap) moves=12
+[optimizer] Pass-1 pick/storage: candidates=12 time=0.21s
+[optimizer] pass0_area_rebalance moves=31
+[optimizer] Pass-0 area_rebalance: candidates=31 time=0.03s
+[optimizer] Total candidates collected: 43
+[optimizer] About to sort 43 candidates...
+[optimizer] Processing candidate 0/43...
+[optimizer] Created moves_with_meta with 43 entries, now sorting...
+[optimizer] Sorting complete
+[optimizer] max_moves=50, total_candidates=43
+[optimizer] After selection: len(moves)=43
+[optimizer] Final move selection: Pass-1=4, Pass-0=14, total=43
+[optimizer] First 5 selected moves:
+  [0] priority=1, sku=A3936N11-71, from=00303026, to=00103004, reason=古ロット(Lot:2025/04/24)→取口Lv1 & 手前化(奥26→4) → 先入先出徹底、取り出し容易化
+  [1] priority=1, sku=A3035Z51, from=00302905, to=00102911, reason=古ロット(Lot:2025/04/22)→取口Lv1 → 先入先出徹底
+  [2] priority=1, sku=A3937N21, from=00302909, to=00102912, reason=古ロット(Lot:2025/05/30)→取口Lv1 → 先入先出徹底
+  [3] priority=1, sku=A82E2N22, from=00303102, to=00103102, reason=古ロット(Lot:2025/03/28)→取口Lv1 → 先入先出徹底
+  [4] priority=2, sku=A1680N22, from=00204112, to=00203001, reason=エリア移動(列41→30) → エリア内バランス
+[optimizer] Pre-cached 4 levels with locations
+[optimizer] Pass-2 completed: 32 moves in 1.40s, total=50
+[optimizer] Pass-3 AI optimization: moves=0 time=0.00s total=50
+[optimizer] planned moves=50 (limit=50)
+[optimizer] Auto-enforce is enabled, starting constraint enforcement
+[optimizer] Calling enforce_constraints with 50 moves
+[optimizer] constraints accepted=50/50; rejects: oversize=0, forbidden=0, capacity=0, fifo=0, pack_band=0, other=0
+[optimizer] enforce_constraints completed: 50 accepted out of 50
+[optimizer] Generating summary report: accepted=50, rejected=0
+[_generate_relocation_summary] Starting: moves=50, rejected=0
+[_generate_relocation_summary] Completed: keys=['total_planned', 'pass_stats', 'total_rejected', 'total_accepted', 'affected_skus', 'from_locations', 'to_locations', 'total_cases', 'sku_consolidation', 'lot_mixing_issues', 'lot_mixing_details', 'reason_breakdown', 'old_lot_to_pick_count', 'hotspot_moves_count', 'hotspot_criteria', 'recommendations', 'move_rate_percent']
+[optimizer] Summary report generated: ['total_planned', 'pass_stats', 'total_rejected', 'total_accepted', 'affected_skus', 'from_locations', 'to_locations', 'total_cases', 'sku_consolidation', 'lot_mixing_issues', 'lot_mixing_details', 'reason_breakdown', 'old_lot_to_pick_count', 'hotspot_moves_count', 'hotspot_criteria', 'recommendations', 'move_rate_percent']
+[optimizer] Report formatted, 48 lines
+[optimizer] Summary Report:
+======================================================================
+📊 リロケーション結果の総合評価
+======================================================================
+
+【実施結果】
+  計画移動数: 50 件
+  承認移動数: 50 件
+  却下移動数: 0 件
+  移動率: 11.8%
+  影響SKU数: 34 種類
+  総ケース数: 1,020 ケース
+
+【最適化効果】
+  ▶ Pass毎の改善 (実行順):
+    • Pass-1 (取口/保管整列) 【最優先】: 4件
+      → 同一SKU内で古いロットを取り口へ、新しいロットを保管段へ
+    • Pass-0 (エリア再配置) 【第2優先】: 14件
+      → 入数帯の是正、適切な列への移動
+    • Pass-2 (圧縮/集約) 【第3優先】: 32件
+      → SKU集約、下段優先配置、動線最適化
+
+  📦 古いロット→取り口ロケ: 8 件
+     (同一SKU内で相対的に古いロットをレベル1-2へ移動)
+  🔥 高出荷SKU→ホットスポット: なし
+
+  ▶ 移動理由別の内訳:
+    • 取口内整列(Lv2: 8件
+    • 入口接近(列7: 4件
+    • エリア移動(列41: 3件
+    • エリア移動(列37: 3件
+    • エリア移動(列36: 3件
+    • 入口接近(列3: 3件
+    • 入口接近(列11: 3件
+    • エリア移動(列40: 2件
+    • 入口接近(列5: 2件
+    • 容量確保退避(連鎖深度0): 2件
+
+【SKU集約状況】
+  A82E2N12: ⚠️ 4→5ロケ (分散)
+     移動前 (4ロケ): 00102316, 00102625, 00102913, 00203719
+     移動後 (5ロケ): 00102316, 00102625, 00102912, 00102913, 00203719
+【ハードルール検証】
+  ✅ ロット混在なし
+
+【推奨事項】
+  • ✅ 古いロット8件を取り口ロケ(Lv1)へ移動 - FIFO回転促進
+
+======================================================================
+[_publish_progress] Publishing summary_report to trace_id=d5a5db341c47
+[_publish_progress] Payload keys: ['type', 'report', 'data', 'message', 'ts']
+[_publish_progress] Report length: 1063
+[_publish_progress] Subscribers count: 1
+[optimizer] Summary report published via SSE
+INFO:     127.0.0.1:62415 - "POST /v1/upload/relocation/start HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62415 - "GET /v1/upload/relocation/debug?trace_id=d5a5db341c47 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62422 - "GET /v1/upload/relocation/debug HTTP/1.1" 200 OK
+[optimizer] location_master provided: slots=198 receivable=198 (filtered from 198)
+[optimizer] sku_master cols=['商品ID', '入数', 'volume_m3', '商品予備項目００６'] rows=3240
+[optimizer] after block_filter=None rows=3251
+[optimizer] after quality_filter=None rows=3251
+[optimizer] carton_volume_map size=3240
+[optimizer] Sample locations before parse: ['00100103', '00100108', '00100201', '00100202', '00100202']
+[optimizer] Location dtype: object
+[optimizer] Sample locations after parse: ['00100103', '00100108', '00100201', '00100202', '00100202']
+[optimizer] qty_cases_move min=1 max=149
+[optimizer] dominant_pack_by_col keys=41 thr=0.7
+[optimizer] shelf_usage locations=584 (cap=1.1700000000000002)
+[Pass-1] total=425, has_volume=425, has_lot=424, unknown_lot_key=99999999
+[Pass-1] subset size after filter: 424
+[Pass-1] Summary: groups=372, with_moves=12, total_moves=12
+[optimizer] pass1_pick_storage_balance (with swap) moves=12
+[optimizer] Pass-1 pick/storage: candidates=12 time=0.22s
+[optimizer] pass0_area_rebalance moves=31
+[optimizer] Pass-0 area_rebalance: candidates=31 time=0.03s
+[optimizer] Total candidates collected: 43
+[optimizer] About to sort 43 candidates...
+[optimizer] Processing candidate 0/43...
+[optimizer] Created moves_with_meta with 43 entries, now sorting...
+[optimizer] Sorting complete
+[optimizer] max_moves=50, total_candidates=43
+[optimizer] After selection: len(moves)=43
+[optimizer] Final move selection: Pass-1=4, Pass-0=14, total=43
+[optimizer] First 5 selected moves:
+  [0] priority=1, sku=A3936N11-71, from=00303026, to=00103004, reason=古ロット(Lot:2025/04/24)→取口Lv1 & 手前化(奥26→4) → 先入先出徹底、取り出し容易化
+  [1] priority=1, sku=A3035Z51, from=00302905, to=00102911, reason=古ロット(Lot:2025/04/22)→取口Lv1 → 先入先出徹底
+  [2] priority=1, sku=A3937N21, from=00302909, to=00102912, reason=古ロット(Lot:2025/05/30)→取口Lv1 → 先入先出徹底
+  [3] priority=1, sku=A82E2N22, from=00303102, to=00103102, reason=古ロット(Lot:2025/03/28)→取口Lv1 → 先入先出徹底
+  [4] priority=2, sku=A1680N22, from=00204112, to=00203001, reason=エリア移動(列41→30) → エリア内バランス
+[optimizer] Pre-cached 4 levels with locations
+[optimizer] Pass-2 completed: 32 moves in 1.40s, total=50
+[optimizer] Pass-3 AI optimization: moves=0 time=0.00s total=50
+[optimizer] planned moves=50 (limit=50)
+[optimizer] Auto-enforce is enabled, starting constraint enforcement
+[optimizer] Calling enforce_constraints with 50 moves
+[optimizer] constraints accepted=50/50; rejects: oversize=0, forbidden=0, capacity=0, fifo=0, pack_band=0, other=0
+[optimizer] enforce_constraints completed: 50 accepted out of 50
+[optimizer] Generating summary report: accepted=50, rejected=0
+[_generate_relocation_summary] Starting: moves=50, rejected=0
+[_generate_relocation_summary] Completed: keys=['total_planned', 'pass_stats', 'total_rejected', 'total_accepted', 'affected_skus', 'from_locations', 'to_locations', 'total_cases', 'sku_consolidation', 'lot_mixing_issues', 'lot_mixing_details', 'reason_breakdown', 'old_lot_to_pick_count', 'hotspot_moves_count', 'hotspot_criteria', 'recommendations', 'move_rate_percent']
+[optimizer] Summary report generated: ['total_planned', 'pass_stats', 'total_rejected', 'total_accepted', 'affected_skus', 'from_locations', 'to_locations', 'total_cases', 'sku_consolidation', 'lot_mixing_issues', 'lot_mixing_details', 'reason_breakdown', 'old_lot_to_pick_count', 'hotspot_moves_count', 'hotspot_criteria', 'recommendations', 'move_rate_percent']
+[optimizer] Report formatted, 48 lines
+[optimizer] Summary Report:
+======================================================================
+📊 リロケーション結果の総合評価
+======================================================================
+
+【実施結果】
+  計画移動数: 50 件
+  承認移動数: 50 件
+  却下移動数: 0 件
+  移動率: 11.8%
+  影響SKU数: 34 種類
+  総ケース数: 1,020 ケース
+
+【最適化効果】
+  ▶ Pass毎の改善 (実行順):
+    • Pass-1 (取口/保管整列) 【最優先】: 4件
+      → 同一SKU内で古いロットを取り口へ、新しいロットを保管段へ
+    • Pass-0 (エリア再配置) 【第2優先】: 14件
+      → 入数帯の是正、適切な列への移動
+    • Pass-2 (圧縮/集約) 【第3優先】: 32件
+      → SKU集約、下段優先配置、動線最適化
+
+  📦 古いロット→取り口ロケ: 8 件
+     (同一SKU内で相対的に古いロットをレベル1-2へ移動)
+  🔥 高出荷SKU→ホットスポット: なし
+
+  ▶ 移動理由別の内訳:
+    • 取口内整列(Lv2: 8件
+    • 入口接近(列7: 4件
+    • エリア移動(列41: 3件
+    • エリア移動(列37: 3件
+    • エリア移動(列36: 3件
+    • 入口接近(列3: 3件
+    • 入口接近(列11: 3件
+    • エリア移動(列40: 2件
+    • 入口接近(列5: 2件
+    • 容量確保退避(連鎖深度0): 2件
+
+【SKU集約状況】
+  A82E2N12: ⚠️ 4→5ロケ (分散)
+     移動前 (4ロケ): 00102316, 00102625, 00102913, 00203719
+     移動後 (5ロケ): 00102316, 00102625, 00102912, 00102913, 00203719
+【ハードルール検証】
+  ✅ ロット混在なし
+
+【推奨事項】
+  • ✅ 古いロット8件を取り口ロケ(Lv1)へ移動 - FIFO回転促進
+
+======================================================================
+[_publish_progress] Publishing summary_report to trace_id=f164da5f8c1f
+[_publish_progress] Payload keys: ['type', 'report', 'data', 'message', 'ts']
+[_publish_progress] Report length: 1063
+[_publish_progress] Subscribers count: 0
+[optimizer] Summary report published via SSE
+INFO:     127.0.0.1:62420 - "POST /v1/upload/relocation/start/final-moves HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62427 - "GET /v1/debug/inventory?limit=1000&offset=0&block=B HTTP/1.1" 422 Unprocessable Content
+INFO:     127.0.0.1:62430 - "GET /v1/debug/inventory?limit=1000&offset=0&block=B HTTP/1.1" 422 Unprocessable Content
+INFO:     127.0.0.1:62460 - "GET /v1/debug/inventory?limit=500&offset=0 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62460 - "GET /v1/debug/inventory?limit=500&offset=500 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62460 - "GET /v1/debug/inventory?limit=500&offset=1000 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62460 - "GET /v1/debug/inventory?limit=500&offset=1500 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62460 - "GET /v1/debug/inventory?limit=500&offset=2000 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62460 - "GET /v1/debug/inventory?limit=500&offset=2500 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62460 - "GET /v1/debug/inventory?limit=500&offset=3000 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62460 - "GET /v1/debug/inventory?limit=500&offset=3500 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62460 - "GET /v1/debug/inventory?limit=500&offset=4000 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62460 - "GET /v1/debug/inventory?limit=500&offset=4500 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62460 - "GET /v1/debug/inventory?limit=500&offset=5000 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62460 - "GET /v1/debug/inventory?limit=500&offset=5500 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62490 - "GET /v1/debug/inventory?limit=500&offset=0 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62490 - "GET /v1/debug/inventory?limit=500&offset=500 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62490 - "GET /v1/debug/inventory?limit=500&offset=1000 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62490 - "GET /v1/debug/inventory?limit=500&offset=1500 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62490 - "GET /v1/debug/inventory?limit=500&offset=2000 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62490 - "GET /v1/debug/inventory?limit=500&offset=2500 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62490 - "GET /v1/debug/inventory?limit=500&offset=3000 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62490 - "GET /v1/debug/inventory?limit=500&offset=3500 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62490 - "GET /v1/debug/inventory?limit=500&offset=4000 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62490 - "GET /v1/debug/inventory?limit=500&offset=4500 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62490 - "GET /v1/debug/inventory?limit=500&offset=5000 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62490 - "GET /v1/debug/inventory?limit=500&offset=5500 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62490 - "GET /v1/debug/inventory?limit=500&offset=0 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62490 - "GET /v1/debug/inventory?limit=500&offset=500 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62490 - "GET /v1/debug/inventory?limit=500&offset=1000 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62490 - "GET /v1/debug/inventory?limit=500&offset=1500 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62490 - "GET /v1/debug/inventory?limit=500&offset=2000 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62490 - "GET /v1/debug/inventory?limit=500&offset=2500 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62490 - "GET /v1/debug/inventory?limit=500&offset=3000 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62490 - "GET /v1/debug/inventory?limit=500&offset=3500 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62490 - "GET /v1/debug/inventory?limit=500&offset=4000 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62490 - "GET /v1/debug/inventory?limit=500&offset=4500 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62490 - "GET /v1/debug/inventory?limit=500&offset=5000 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62490 - "GET /v1/debug/inventory?limit=500&offset=5500 HTTP/1.1" 200 OK
+WARNING:  StatReload detected changes in 'backend/app/routers/debug.py'. Reloading...
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [94398]
+INFO:     Started server process [26659]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+WARNING:  StatReload detected changes in 'backend/app/routers/debug.py'. Reloading...
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [26659]
+INFO:     Started server process [27132]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+[DEBUG] sitecustomize imported
+[main] Loaded env files: /Users/kounoyousuke/warehouse-optimizer/backend/.env, /Users/kounoyousuke/warehouse-optimizer/.env
+INFO:     127.0.0.1:62616 - "GET /v1/debug/inventory?limit=5000&offset=0 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62616 - "GET /v1/debug/inventory?limit=5000&offset=5000 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62636 - "GET /v1/debug/inventory?limit=5000&offset=0 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62636 - "GET /v1/debug/inventory?limit=5000&offset=5000 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62636 - "GET /v1/debug/inventory?limit=5000&offset=0 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62636 - "GET /v1/debug/inventory?limit=5000&offset=5000 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62638 - "GET /v1/upload/relocation/stream?trace_id=f50815926982 HTTP/1.1" 200 OK
+[optimizer] location_master provided: slots=198 receivable=198 (filtered from 198)
+[optimizer] sku_master cols=['商品ID', '入数', 'volume_m3', '商品予備項目００６'] rows=3240
+[optimizer] after block_filter=None rows=3251
+[optimizer] after quality_filter=None rows=3251
+[optimizer] carton_volume_map size=3240
+[optimizer] Sample locations before parse: ['00100103', '00100108', '00100201', '00100202', '00100202']
+[optimizer] Location dtype: object
+[optimizer] Sample locations after parse: ['00100103', '00100108', '00100201', '00100202', '00100202']
+[optimizer] qty_cases_move min=1 max=149
+[optimizer] dominant_pack_by_col keys=41 thr=0.7
+[optimizer] shelf_usage locations=584 (cap=1.1700000000000002)
+[Pass-1] total=425, has_volume=425, has_lot=424, unknown_lot_key=99999999
+[Pass-1] subset size after filter: 424
+[Pass-1] Summary: groups=372, with_moves=12, total_moves=12
+[optimizer] pass1_pick_storage_balance (with swap) moves=12
+[optimizer] Pass-1 pick/storage: candidates=12 time=0.23s
+[optimizer] pass0_area_rebalance moves=31
+[optimizer] Pass-0 area_rebalance: candidates=31 time=0.03s
+[optimizer] Total candidates collected: 43
+[optimizer] About to sort 43 candidates...
+[optimizer] Processing candidate 0/43...
+[optimizer] Created moves_with_meta with 43 entries, now sorting...
+[optimizer] Sorting complete
+[optimizer] max_moves=50, total_candidates=43
+[optimizer] After selection: len(moves)=43
+[optimizer] Final move selection: Pass-1=4, Pass-0=14, total=43
+[optimizer] First 5 selected moves:
+  [0] priority=1, sku=A3936N11-71, from=00303026, to=00103004, reason=古ロット(Lot:2025/04/24)→取口Lv1 & 手前化(奥26→4) → 先入先出徹底、取り出し容易化
+  [1] priority=1, sku=A3035Z51, from=00302905, to=00102911, reason=古ロット(Lot:2025/04/22)→取口Lv1 → 先入先出徹底
+  [2] priority=1, sku=A3937N21, from=00302909, to=00102912, reason=古ロット(Lot:2025/05/30)→取口Lv1 → 先入先出徹底
+  [3] priority=1, sku=A82E2N22, from=00303102, to=00103102, reason=古ロット(Lot:2025/03/28)→取口Lv1 → 先入先出徹底
+  [4] priority=2, sku=A1680N22, from=00204111, to=00103127, reason=エリア移動(列41→31) & 段下げ(Lv2→1) → エリア内バランス、下段活用
+[optimizer] Pre-cached 4 levels with locations
+[optimizer] Pass-2 completed: 34 moves in 1.25s, total=52
+[optimizer] Pass-3 AI optimization: moves=0 time=0.00s total=52
+[optimizer] planned moves=52 (limit=50)
+[optimizer] Auto-enforce is enabled, starting constraint enforcement
+[optimizer] Calling enforce_constraints with 52 moves
+[optimizer] constraints accepted=52/52; rejects: oversize=0, forbidden=0, capacity=0, fifo=0, pack_band=0, other=0
+[optimizer] enforce_constraints completed: 52 accepted out of 52
+[optimizer] Generating summary report: accepted=52, rejected=0
+[_generate_relocation_summary] Starting: moves=52, rejected=0
+[_generate_relocation_summary] Completed: keys=['total_planned', 'pass_stats', 'total_rejected', 'total_accepted', 'affected_skus', 'from_locations', 'to_locations', 'total_cases', 'sku_consolidation', 'lot_mixing_issues', 'lot_mixing_details', 'reason_breakdown', 'old_lot_to_pick_count', 'hotspot_moves_count', 'hotspot_criteria', 'recommendations', 'move_rate_percent']
+[optimizer] Summary report generated: ['total_planned', 'pass_stats', 'total_rejected', 'total_accepted', 'affected_skus', 'from_locations', 'to_locations', 'total_cases', 'sku_consolidation', 'lot_mixing_issues', 'lot_mixing_details', 'reason_breakdown', 'old_lot_to_pick_count', 'hotspot_moves_count', 'hotspot_criteria', 'recommendations', 'move_rate_percent']
+[optimizer] Report formatted, 44 lines
+[optimizer] Summary Report:
+======================================================================
+📊 リロケーション結果の総合評価
+======================================================================
+
+【実施結果】
+  計画移動数: 52 件
+  承認移動数: 52 件
+  却下移動数: 0 件
+  移動率: 12.2%
+  影響SKU数: 34 種類
+  総ケース数: 1,060 ケース
+
+【最適化効果】
+  ▶ Pass毎の改善 (実行順):
+    • Pass-1 (取口/保管整列) 【最優先】: 4件
+      → 同一SKU内で古いロットを取り口へ、新しいロットを保管段へ
+    • Pass-0 (エリア再配置) 【第2優先】: 14件
+      → 入数帯の是正、適切な列への移動
+    • Pass-2 (圧縮/集約) 【第3優先】: 34件
+      → SKU集約、下段優先配置、動線最適化
+
+  📦 古いロット→取り口ロケ: 8 件
+     (同一SKU内で相対的に古いロットをレベル1-2へ移動)
+  🔥 高出荷SKU→ホットスポット: なし
+
+  ▶ 移動理由別の内訳:
+    • 取口内整列(Lv2: 8件
+    • 入口接近(列7: 4件
+    • 容量確保退避(連鎖深度1): 4件
+    • エリア移動(列41: 3件
+    • エリア移動(列37: 3件
+    • エリア移動(列36: 3件
+    • 入口接近(列3: 3件
+    • 入口接近(列11: 3件
+    • エリア移動(列40: 2件
+    • 入口接近(列5: 2件
+
+【ハードルール検証】
+  ✅ ロット混在なし
+
+【推奨事項】
+  • ✅ 古いロット8件を取り口ロケ(Lv1)へ移動 - FIFO回転促進
+
+======================================================================
+[_publish_progress] Publishing summary_report to trace_id=f50815926982
+[_publish_progress] Payload keys: ['type', 'report', 'data', 'message', 'ts']
+[_publish_progress] Report length: 907
+[_publish_progress] Subscribers count: 1
+[optimizer] Summary report published via SSE
+INFO:     127.0.0.1:62636 - "POST /v1/upload/relocation/start HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62636 - "GET /v1/upload/relocation/debug?trace_id=f50815926982 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62636 - "GET /v1/debug/inventory?limit=5000&offset=0&block=B HTTP/1.1" 200 OK
+[metrics] Latest transaction date detected: 2025-11-11
+INFO:     127.0.0.1:63106 - "GET /v1/debug/inventory?limit=500&offset=0 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63106 - "GET /v1/debug/inventory?limit=500&offset=500 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63106 - "GET /v1/debug/inventory?limit=500&offset=1000 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63106 - "GET /v1/debug/inventory?limit=500&offset=1500 HTTP/1.1" 200 OK
+[metrics] Latest transaction date: 2025-11-11, Analysis period: 2025-08-13 to 2025-11-11 (90 days)
+INFO:     127.0.0.1:63108 - "POST /v1/upload/analysis/start HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63106 - "GET /v1/debug/inventory?limit=500&offset=2000 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63108 - "GET /v1/debug/sku_metrics?window_days=90&limit=500&offset=0 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63106 - "GET /v1/debug/inventory?limit=500&offset=2500 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63108 - "GET /v1/debug/sku_metrics?window_days=90&limit=500&offset=500 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63106 - "GET /v1/debug/inventory?limit=500&offset=3000 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63108 - "GET /v1/debug/sku_metrics?window_days=90&limit=500&offset=1000 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63108 - "GET /v1/debug/sku_metrics?window_days=90&limit=500&offset=1500 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63106 - "GET /v1/debug/inventory?limit=500&offset=3500 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63108 - "GET /v1/debug/sku_metrics?window_days=90&limit=500&offset=2000 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63106 - "GET /v1/debug/inventory?limit=500&offset=4000 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63108 - "GET /v1/debug/sku_metrics?window_days=90&limit=500&offset=2500 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63106 - "GET /v1/debug/inventory?limit=500&offset=4500 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63108 - "GET /v1/debug/sku_metrics?window_days=90&limit=500&offset=3000 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63106 - "GET /v1/debug/inventory?limit=500&offset=5000 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63108 - "GET /v1/debug/inventory?limit=500&offset=0 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63106 - "GET /v1/debug/inventory?limit=500&offset=5500 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63108 - "GET /v1/debug/inventory?limit=500&offset=500 HTTP/1.1" 200 OK
+[metrics] Latest transaction date detected: 2025-11-11
+INFO:     127.0.0.1:63106 - "GET /v1/debug/inventory?limit=500&offset=0 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63108 - "GET /v1/debug/inventory?limit=500&offset=1000 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63106 - "GET /v1/debug/inventory?limit=500&offset=500 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63108 - "GET /v1/debug/inventory?limit=500&offset=1500 HTTP/1.1" 200 OK
+[metrics] Latest transaction date: 2025-11-11, Analysis period: 2025-08-13 to 2025-11-11 (90 days)
+INFO:     127.0.0.1:63110 - "POST /v1/upload/analysis/start HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63108 - "GET /v1/debug/sku_metrics?window_days=90&limit=500&offset=0&quality_names=%E8%89%AF%E5%93%81 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63106 - "GET /v1/debug/inventory?limit=500&offset=1000 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63110 - "GET /v1/debug/inventory?limit=500&offset=2000 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63108 - "GET /v1/debug/sku_metrics?window_days=90&limit=500&offset=500&quality_names=%E8%89%AF%E5%93%81 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63110 - "GET /v1/debug/inventory?limit=500&offset=2500 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63106 - "GET /v1/debug/inventory?limit=500&offset=1500 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63108 - "GET /v1/debug/sku_metrics?window_days=90&limit=500&offset=1000&quality_names=%E8%89%AF%E5%93%81 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63110 - "GET /v1/debug/inventory?limit=500&offset=3000 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63106 - "GET /v1/debug/inventory?limit=500&offset=2000 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63108 - "GET /v1/debug/sku_metrics?window_days=90&limit=500&offset=1500&quality_names=%E8%89%AF%E5%93%81 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63106 - "GET /v1/debug/inventory?limit=500&offset=2500 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63110 - "GET /v1/debug/inventory?limit=500&offset=3500 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63108 - "GET /v1/debug/sku_metrics?window_days=90&limit=500&offset=2000&quality_names=%E8%89%AF%E5%93%81 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63110 - "GET /v1/debug/inventory?limit=500&offset=4000 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63106 - "GET /v1/debug/inventory?limit=500&offset=3000 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63108 - "GET /v1/debug/sku_metrics?window_days=90&limit=500&offset=2500&quality_names=%E8%89%AF%E5%93%81 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63110 - "GET /v1/debug/inventory?limit=500&offset=4500 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63108 - "GET /v1/debug/sku_metrics?window_days=90&limit=500&offset=3000&quality_names=%E8%89%AF%E5%93%81 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63106 - "GET /v1/debug/inventory?limit=500&offset=3500 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63108 - "GET /v1/debug/inventory?limit=500&offset=0 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63110 - "GET /v1/debug/inventory?limit=500&offset=5000 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63106 - "GET /v1/debug/inventory?limit=500&offset=4000 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63110 - "GET /v1/debug/inventory?limit=500&offset=5500 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63108 - "GET /v1/debug/inventory?limit=500&offset=500 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63106 - "GET /v1/debug/inventory?limit=500&offset=4500 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63110 - "GET /v1/debug/locations?limit=500&offset=0 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63108 - "GET /v1/debug/inventory?limit=500&offset=1000 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63106 - "GET /v1/debug/inventory?limit=500&offset=5000 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63108 - "GET /v1/debug/inventory?limit=500&offset=1500 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63106 - "GET /v1/debug/inventory?limit=500&offset=5500 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63108 - "GET /v1/debug/inventory?limit=500&offset=2000 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63108 - "GET /v1/debug/inventory?limit=500&offset=2500 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63108 - "GET /v1/debug/inventory?limit=500&offset=3000 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63108 - "GET /v1/debug/inventory?limit=500&offset=3500 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63108 - "GET /v1/debug/inventory?limit=500&offset=4000 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63108 - "GET /v1/debug/inventory?limit=500&offset=4500 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63108 - "GET /v1/debug/inventory?limit=500&offset=5000 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63108 - "GET /v1/debug/inventory?limit=500&offset=5500 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63108 - "GET /v1/debug/locations?limit=500&offset=0 HTTP/1.1" 200 OK
+WARNING:  StatReload detected changes in 'backend/app/routers/upload.py'. Reloading...
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [27132]
+INFO:     Started server process [47842]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.

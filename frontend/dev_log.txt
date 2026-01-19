@@ -1,0 +1,54 @@
+
+> frontend@0.1.0 dev
+> next dev --turbopack
+
+   ▲ Next.js 15.4.5 (Turbopack)
+   - Local:        http://localhost:3000
+   - Network:      http://192.168.0.184:3000
+   - Environments: .env.local
+
+ ✓ Starting...
+ ✓ Ready in 702ms
+ ○ Compiling /upload ...
+ ✓ Compiled /upload in 799ms
+ GET /upload 200 in 913ms
+ ✓ Compiled /favicon.ico in 428ms
+ GET /favicon.ico 200 in 694ms
+ ✓ Compiled /optimize in 88ms
+ GET /optimize 200 in 114ms
+ ✓ Compiled / in 48ms
+ GET / 200 in 73ms
+ GET / 200 in 200ms
+ ✓ Compiled /debug in 371ms
+(node:59100) [DEP0060] DeprecationWarning: The `util._extend` API is deprecated. Please use Object.assign() instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+ GET /optimize 200 in 34ms
+ GET /favicon.ico 200 in 224ms
+ ✓ Compiled in 178ms
+ ✓ Compiled in 147ms
+ ✓ Compiled /optimize in 21ms
+ GET /optimize 200 in 123ms
+ GET /favicon.ico 200 in 221ms
+ GET /optimize 200 in 32ms
+ GET /favicon.ico 200 in 214ms
+ GET /optimize 200 in 51ms
+ GET /favicon.ico 200 in 220ms
+ ○ Compiling /analyze ...
+ ✓ Compiled /analyze in 664ms
+ GET /debug 200 in 57ms
+ GET /favicon.ico 200 in 216ms
+ GET /optimize 200 in 106ms
+ GET /optimize 200 in 104ms
+ GET /favicon.ico 200 in 217ms
+ GET /optimize 200 in 114ms
+ GET /optimize 200 in 65ms
+ GET /favicon.ico 200 in 272ms
+Failed to proxy http://localhost:8000/v1/debug/inventory?limit=500&offset=0 [AggregateError: ] { code: 'ECONNREFUSED' }
+[AggregateError: ] { code: 'ECONNREFUSED' }
+ ✓ Compiled /_error in 257ms
+ GET /debug 200 in 34ms
+ GET /favicon.ico 200 in 221ms
+ GET /debug 200 in 51ms
+ GET /favicon.ico 200 in 219ms
+ GET /debug 200 in 31ms
+ GET /favicon.ico 200 in 220ms

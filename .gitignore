@@ -17,3 +17,4 @@ docker/**/cache/
 # ---- Data ----
 sample_data/
 *.xlsx
+.vercel

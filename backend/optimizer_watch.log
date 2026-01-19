@@ -1,0 +1,659 @@
+INFO:     Will watch for changes in these directories: ['/Users/kounoyousuke/warehouse-optimizer/backend']
+[main] Loaded env files: /Users/kounoyousuke/warehouse-optimizer/backend/.env, /Users/kounoyousuke/warehouse-optimizer/.env
+[optimizer] location_master provided: slots=2765 receivable=2765 (filtered from 2765)
+[optimizer] sku_master cols=['商品ID', '入数', 'volume_m3', '商品予備項目００６'] rows=3450
+[optimizer] after block_filter=None rows=3251
+[optimizer] after quality_filter=None rows=3251
+[optimizer] carton_volume_map size=3450
+[optimizer] qty_cases_move min=1 max=149
+[optimizer] dominant_pack_by_col keys=1 thr=0.7
+[optimizer] shelf_usage locations=3508 (cap=1.2349999999999999)
+WARNING:  WatchFiles detected changes in 'app/services/optimizer.py'. Reloading...
+INFO:     Will watch for changes in these directories: ['/Users/kounoyousuke/warehouse-optimizer/backend']
+  File "/Users/kounoyousuke/warehouse-optimizer/backend/.venv/lib/python3.13/site-packages/uvicorn/_subprocess.py", line 80, in subprocess_started
+  File "/Users/kounoyousuke/warehouse-optimizer/backend/.venv/lib/python3.13/site-packages/uvicorn/server.py", line 67, in run
+  File "/Users/kounoyousuke/warehouse-optimizer/backend/.venv/lib/python3.13/site-packages/uvicorn/server.py", line 71, in serve
+  File "/Users/kounoyousuke/warehouse-optimizer/backend/.venv/lib/python3.13/site-packages/uvicorn/server.py", line 78, in _serve
+  File "/Users/kounoyousuke/warehouse-optimizer/backend/.venv/lib/python3.13/site-packages/uvicorn/config.py", line 436, in load
+  File "/Users/kounoyousuke/warehouse-optimizer/backend/.venv/lib/python3.13/site-packages/uvicorn/importer.py", line 19, in import_from_string
+  File "/Users/kounoyousuke/warehouse-optimizer/backend/app/main.py", line 40, in <module>
+  File "/Users/kounoyousuke/warehouse-optimizer/backend/app/routers/upload.py", line 65, in <module>
+    from app.services.optimizer import (
+  File "/Users/kounoyousuke/warehouse-optimizer/backend/app/services/optimizer.py", line 2838
+[main] Loaded env files: /Users/kounoyousuke/warehouse-optimizer/backend/.env, /Users/kounoyousuke/warehouse-optimizer/.env
+WARNING:  WatchFiles detected changes in 'app/services/optimizer.py'. Reloading...
+  File "/Users/kounoyousuke/warehouse-optimizer/backend/.venv/lib/python3.13/site-packages/uvicorn/_subprocess.py", line 80, in subprocess_started
+  File "/Users/kounoyousuke/warehouse-optimizer/backend/.venv/lib/python3.13/site-packages/uvicorn/server.py", line 67, in run
+  File "/Users/kounoyousuke/warehouse-optimizer/backend/.venv/lib/python3.13/site-packages/uvicorn/server.py", line 71, in serve
+  File "/Users/kounoyousuke/warehouse-optimizer/backend/.venv/lib/python3.13/site-packages/uvicorn/server.py", line 78, in _serve
+  File "/Users/kounoyousuke/warehouse-optimizer/backend/.venv/lib/python3.13/site-packages/uvicorn/config.py", line 436, in load
+  File "/Users/kounoyousuke/warehouse-optimizer/backend/.venv/lib/python3.13/site-packages/uvicorn/importer.py", line 19, in import_from_string
+  File "/Users/kounoyousuke/warehouse-optimizer/backend/app/main.py", line 40, in <module>
+  File "/Users/kounoyousuke/warehouse-optimizer/backend/app/routers/upload.py", line 65, in <module>
+    from app.services.optimizer import (
+  File "/Users/kounoyousuke/warehouse-optimizer/backend/app/services/optimizer.py", line 2851
+[main] Loaded env files: /Users/kounoyousuke/warehouse-optimizer/backend/.env, /Users/kounoyousuke/warehouse-optimizer/.env
+WARNING:  WatchFiles detected changes in 'app/services/optimizer.py'. Reloading...
+  File "/Users/kounoyousuke/warehouse-optimizer/backend/.venv/lib/python3.13/site-packages/uvicorn/_subprocess.py", line 80, in subprocess_started
+  File "/Users/kounoyousuke/warehouse-optimizer/backend/.venv/lib/python3.13/site-packages/uvicorn/server.py", line 67, in run
+  File "/Users/kounoyousuke/warehouse-optimizer/backend/.venv/lib/python3.13/site-packages/uvicorn/server.py", line 71, in serve
+  File "/Users/kounoyousuke/warehouse-optimizer/backend/.venv/lib/python3.13/site-packages/uvicorn/server.py", line 78, in _serve
+  File "/Users/kounoyousuke/warehouse-optimizer/backend/.venv/lib/python3.13/site-packages/uvicorn/config.py", line 436, in load
+  File "/Users/kounoyousuke/warehouse-optimizer/backend/.venv/lib/python3.13/site-packages/uvicorn/importer.py", line 19, in import_from_string
+  File "/Users/kounoyousuke/warehouse-optimizer/backend/app/main.py", line 40, in <module>
+  File "/Users/kounoyousuke/warehouse-optimizer/backend/app/routers/upload.py", line 65, in <module>
+    from app.services.optimizer import (
+  File "/Users/kounoyousuke/warehouse-optimizer/backend/app/services/optimizer.py", line 2861
+[main] Loaded env files: /Users/kounoyousuke/warehouse-optimizer/backend/.env, /Users/kounoyousuke/warehouse-optimizer/.env
+WARNING:  WatchFiles detected changes in 'app/services/optimizer.py'. Reloading...
+  File "/Users/kounoyousuke/warehouse-optimizer/backend/.venv/lib/python3.13/site-packages/uvicorn/_subprocess.py", line 80, in subprocess_started
+  File "/Users/kounoyousuke/warehouse-optimizer/backend/.venv/lib/python3.13/site-packages/uvicorn/server.py", line 67, in run
+  File "/Users/kounoyousuke/warehouse-optimizer/backend/.venv/lib/python3.13/site-packages/uvicorn/server.py", line 71, in serve
+  File "/Users/kounoyousuke/warehouse-optimizer/backend/.venv/lib/python3.13/site-packages/uvicorn/server.py", line 78, in _serve
+  File "/Users/kounoyousuke/warehouse-optimizer/backend/.venv/lib/python3.13/site-packages/uvicorn/config.py", line 436, in load
+  File "/Users/kounoyousuke/warehouse-optimizer/backend/.venv/lib/python3.13/site-packages/uvicorn/importer.py", line 19, in import_from_string
+  File "/Users/kounoyousuke/warehouse-optimizer/backend/app/main.py", line 40, in <module>
+  File "/Users/kounoyousuke/warehouse-optimizer/backend/app/routers/upload.py", line 65, in <module>
+    from app.services.optimizer import (
+  File "/Users/kounoyousuke/warehouse-optimizer/backend/app/services/optimizer.py", line 2877
+[main] Loaded env files: /Users/kounoyousuke/warehouse-optimizer/backend/.env, /Users/kounoyousuke/warehouse-optimizer/.env
+WARNING:  WatchFiles detected changes in 'app/services/optimizer.py'. Reloading...
+  File "/Users/kounoyousuke/warehouse-optimizer/backend/.venv/lib/python3.13/site-packages/uvicorn/_subprocess.py", line 80, in subprocess_started
+  File "/Users/kounoyousuke/warehouse-optimizer/backend/.venv/lib/python3.13/site-packages/uvicorn/server.py", line 67, in run
+  File "/Users/kounoyousuke/warehouse-optimizer/backend/.venv/lib/python3.13/site-packages/uvicorn/server.py", line 71, in serve
+  File "/Users/kounoyousuke/warehouse-optimizer/backend/.venv/lib/python3.13/site-packages/uvicorn/server.py", line 78, in _serve
+  File "/Users/kounoyousuke/warehouse-optimizer/backend/.venv/lib/python3.13/site-packages/uvicorn/config.py", line 436, in load
+  File "/Users/kounoyousuke/warehouse-optimizer/backend/.venv/lib/python3.13/site-packages/uvicorn/importer.py", line 19, in import_from_string
+  File "/Users/kounoyousuke/warehouse-optimizer/backend/app/main.py", line 40, in <module>
+  File "/Users/kounoyousuke/warehouse-optimizer/backend/app/routers/upload.py", line 65, in <module>
+    from app.services.optimizer import (
+  File "/Users/kounoyousuke/warehouse-optimizer/backend/app/services/optimizer.py", line 2930
+[main] Loaded env files: /Users/kounoyousuke/warehouse-optimizer/backend/.env, /Users/kounoyousuke/warehouse-optimizer/.env
+WARNING:  WatchFiles detected changes in 'app/services/optimizer.py'. Reloading...
+[main] Loaded env files: /Users/kounoyousuke/warehouse-optimizer/backend/.env, /Users/kounoyousuke/warehouse-optimizer/.env
+WARNING:  WatchFiles detected changes in 'app/services/optimizer.py'. Reloading...
+[main] Loaded env files: /Users/kounoyousuke/warehouse-optimizer/backend/.env, /Users/kounoyousuke/warehouse-optimizer/.env
+INFO:     Will watch for changes in these directories: ['/Users/kounoyousuke/warehouse-optimizer/backend']
+[main] Loaded env files: /Users/kounoyousuke/warehouse-optimizer/backend/.env, /Users/kounoyousuke/warehouse-optimizer/.env
+[optimizer] location_master provided: slots=2765 receivable=2765 (filtered from 2765)
+[optimizer] sku_master cols=['商品ID', '入数', 'volume_m3', '商品予備項目００６'] rows=3450
+[optimizer] after block_filter=None rows=3251
+[optimizer] after quality_filter=None rows=3251
+[optimizer] carton_volume_map size=3450
+[optimizer] qty_cases_move min=1 max=149
+[optimizer] dominant_pack_by_col keys=1 thr=0.7
+[optimizer] shelf_usage locations=3508 (cap=1.2349999999999999)
+[optimizer] pass0_area_rebalance moves=100
+[optimizer] Pass-0 area_rebalance: moves=100 time=357.18s total=100
+[optimizer] Pass-1 pick/storage: moves=0 time=1.29s total=100
+[optimizer] Pre-cached 5 levels with locations
+[optimizer] Main loop completed: 100 total moves in 0.00s
+[optimizer] Sorted 100 moves by effectiveness (ease_gain descending)
+[optimizer] planned moves=100 (limit=100)
+[optimizer] Auto-enforce is enabled, starting constraint enforcement
+[optimizer] Calling enforce_constraints with 100 moves
+[optimizer] constraints accepted=100/100; rejects: oversize=0, forbidden=0, capacity=0, fifo=0, pack_band=0, other=0
+[optimizer] enforce_constraints completed: 100 accepted out of 100
+[optimizer] Generating summary report: accepted=100, rejected=0
+[_generate_relocation_summary] Starting: moves=100, rejected=0
+[_generate_relocation_summary] Completed: keys=['total_planned', 'total_rejected', 'total_accepted', 'affected_skus', 'from_locations', 'to_locations', 'total_cases', 'sku_consolidation', 'lot_mixing_issues', 'lot_mixing_details', 'recommendations', 'move_rate_percent']
+[optimizer] Summary report generated: ['total_planned', 'total_rejected', 'total_accepted', 'affected_skus', 'from_locations', 'to_locations', 'total_cases', 'sku_consolidation', 'lot_mixing_issues', 'lot_mixing_details', 'recommendations', 'move_rate_percent']
+[optimizer] Report formatted, 29 lines
+[optimizer] Summary report published via SSE
+[optimizer] Summary Report:
+WARNING:  WatchFiles detected changes in 'app/services/optimizer.py'. Reloading...
+[main] Loaded env files: /Users/kounoyousuke/warehouse-optimizer/backend/.env, /Users/kounoyousuke/warehouse-optimizer/.env
+INFO:     Will watch for changes in these directories: ['/Users/kounoyousuke/warehouse-optimizer/backend']
+[main] Loaded env files: /Users/kounoyousuke/warehouse-optimizer/backend/.env, /Users/kounoyousuke/warehouse-optimizer/.env
+[optimizer] location_master provided: slots=2765 receivable=2765 (filtered from 2765)
+[optimizer] sku_master cols=['商品ID', '入数', 'volume_m3', '商品予備項目００６'] rows=3450
+[optimizer] after block_filter=None rows=3251
+[optimizer] after quality_filter=None rows=3251
+[optimizer] carton_volume_map size=3450
+[optimizer] qty_cases_move min=1 max=149
+[optimizer] dominant_pack_by_col keys=1 thr=0.7
+[optimizer] shelf_usage locations=3508 (cap=1.2349999999999999)
+[optimizer] pass0_area_rebalance moves=48
+[optimizer] Pass-0 area_rebalance: moves=48 time=2.65s total=48
+[optimizer] pass1_pick_storage_balance (with swap) moves=1
+[optimizer] Pass-1 pick/storage: moves=1 time=1.31s total=49
+[optimizer] Pre-cached 5 levels with locations
+[optimizer] main: processed 39/799; moves=49 remaining=1
+[optimizer] main: processed 78/799; moves=49 remaining=1
+[optimizer] main: processed 117/799; moves=49 remaining=1
+[optimizer] main: processed 156/799; moves=49 remaining=1
+[optimizer] main: processed 195/799; moves=49 remaining=1
+[optimizer] main: processed 234/799; moves=49 remaining=1
+[optimizer] main: processed 273/799; moves=49 remaining=1
+[optimizer] main: processed 312/799; moves=49 remaining=1
+[optimizer] main: processed 351/799; moves=49 remaining=1
+[optimizer] main: processed 390/799; moves=49 remaining=1
+[optimizer] main: processed 429/799; moves=49 remaining=1
+[optimizer] main: processed 468/799; moves=49 remaining=1
+[optimizer] main: processed 507/799; moves=49 remaining=1
+[optimizer] main: processed 546/799; moves=49 remaining=1
+[optimizer] main: processed 585/799; moves=49 remaining=1
+[optimizer] Main loop completed: 50 total moves in 0.24s
+[optimizer] Sorted 50 moves by effectiveness (ease_gain descending)
+[optimizer] planned moves=50 (limit=50)
+[optimizer] Auto-enforce is enabled, starting constraint enforcement
+[optimizer] Calling enforce_constraints with 50 moves
+[optimizer] constraints accepted=50/50; rejects: oversize=0, forbidden=0, capacity=0, fifo=0, pack_band=0, other=0
+[optimizer] enforce_constraints completed: 50 accepted out of 50
+[optimizer] Generating summary report: accepted=50, rejected=0
+[_generate_relocation_summary] Starting: moves=50, rejected=0
+[_generate_relocation_summary] Completed: keys=['total_planned', 'total_rejected', 'total_accepted', 'affected_skus', 'from_locations', 'to_locations', 'total_cases', 'sku_consolidation', 'lot_mixing_issues', 'lot_mixing_details', 'recommendations', 'move_rate_percent']
+[optimizer] Summary report generated: ['total_planned', 'total_rejected', 'total_accepted', 'affected_skus', 'from_locations', 'to_locations', 'total_cases', 'sku_consolidation', 'lot_mixing_issues', 'lot_mixing_details', 'recommendations', 'move_rate_percent']
+[optimizer] Report formatted, 29 lines
+[optimizer] Summary report published via SSE
+[optimizer] Summary Report:
+[optimizer] location_master provided: slots=2765 receivable=2765 (filtered from 2765)
+[optimizer] sku_master cols=['商品ID', '入数', 'volume_m3', '商品予備項目００６'] rows=3450
+[optimizer] after block_filter=None rows=3251
+[optimizer] after quality_filter=None rows=3251
+[optimizer] carton_volume_map size=3450
+[optimizer] qty_cases_move min=1 max=149
+[optimizer] dominant_pack_by_col keys=1 thr=0.7
+[optimizer] shelf_usage locations=3508 (cap=1.2349999999999999)
+[optimizer] pass0_area_rebalance moves=48
+[optimizer] Pass-0 area_rebalance: moves=48 time=2.69s total=48
+[optimizer] pass1_pick_storage_balance (with swap) moves=1
+[optimizer] Pass-1 pick/storage: moves=1 time=1.32s total=49
+[optimizer] Pre-cached 5 levels with locations
+[optimizer] main: processed 39/799; moves=49 remaining=1
+[optimizer] main: processed 78/799; moves=49 remaining=1
+[optimizer] main: processed 117/799; moves=49 remaining=1
+[optimizer] main: processed 156/799; moves=49 remaining=1
+[optimizer] main: processed 195/799; moves=49 remaining=1
+[optimizer] main: processed 234/799; moves=49 remaining=1
+[optimizer] main: processed 273/799; moves=49 remaining=1
+[optimizer] main: processed 312/799; moves=49 remaining=1
+[optimizer] main: processed 351/799; moves=49 remaining=1
+[optimizer] main: processed 390/799; moves=49 remaining=1
+[optimizer] main: processed 429/799; moves=49 remaining=1
+[optimizer] main: processed 468/799; moves=49 remaining=1
+[optimizer] main: processed 507/799; moves=49 remaining=1
+[optimizer] main: processed 546/799; moves=49 remaining=1
+[optimizer] main: processed 585/799; moves=49 remaining=1
+[optimizer] Main loop completed: 50 total moves in 0.24s
+[optimizer] Sorted 50 moves by effectiveness (ease_gain descending)
+[optimizer] planned moves=50 (limit=50)
+[optimizer] Auto-enforce is enabled, starting constraint enforcement
+[optimizer] Calling enforce_constraints with 50 moves
+[optimizer] constraints accepted=50/50; rejects: oversize=0, forbidden=0, capacity=0, fifo=0, pack_band=0, other=0
+[optimizer] enforce_constraints completed: 50 accepted out of 50
+[optimizer] Generating summary report: accepted=50, rejected=0
+[_generate_relocation_summary] Starting: moves=50, rejected=0
+[_generate_relocation_summary] Completed: keys=['total_planned', 'total_rejected', 'total_accepted', 'affected_skus', 'from_locations', 'to_locations', 'total_cases', 'sku_consolidation', 'lot_mixing_issues', 'lot_mixing_details', 'recommendations', 'move_rate_percent']
+[optimizer] Summary report generated: ['total_planned', 'total_rejected', 'total_accepted', 'affected_skus', 'from_locations', 'to_locations', 'total_cases', 'sku_consolidation', 'lot_mixing_issues', 'lot_mixing_details', 'recommendations', 'move_rate_percent']
+[optimizer] Report formatted, 29 lines
+[optimizer] Summary report published via SSE
+[optimizer] Summary Report:
+[optimizer] location_master provided: slots=2765 receivable=2765 (filtered from 2765)
+[optimizer] sku_master cols=['商品ID', '入数', 'volume_m3', '商品予備項目００６'] rows=3450
+[optimizer] after block_filter=None rows=3251
+[optimizer] after quality_filter=None rows=3251
+[optimizer] carton_volume_map size=3450
+[optimizer] qty_cases_move min=1 max=149
+[optimizer] dominant_pack_by_col keys=1 thr=0.7
+[optimizer] shelf_usage locations=3508 (cap=1.2349999999999999)
+[optimizer] pass0_area_rebalance moves=48
+[optimizer] Pass-0 area_rebalance: moves=48 time=2.70s total=48
+[optimizer] pass1_pick_storage_balance (with swap) moves=1
+[optimizer] Pass-1 pick/storage: moves=1 time=1.29s total=49
+[optimizer] Pre-cached 5 levels with locations
+[optimizer] main: processed 39/799; moves=49 remaining=1
+[optimizer] main: processed 78/799; moves=49 remaining=1
+[optimizer] main: processed 117/799; moves=49 remaining=1
+[optimizer] main: processed 156/799; moves=49 remaining=1
+[optimizer] main: processed 195/799; moves=49 remaining=1
+[optimizer] main: processed 234/799; moves=49 remaining=1
+[optimizer] main: processed 273/799; moves=49 remaining=1
+[optimizer] main: processed 312/799; moves=49 remaining=1
+[optimizer] main: processed 351/799; moves=49 remaining=1
+[optimizer] main: processed 390/799; moves=49 remaining=1
+[optimizer] main: processed 429/799; moves=49 remaining=1
+[optimizer] main: processed 468/799; moves=49 remaining=1
+[optimizer] main: processed 507/799; moves=49 remaining=1
+[optimizer] main: processed 546/799; moves=49 remaining=1
+[optimizer] main: processed 585/799; moves=49 remaining=1
+[optimizer] Main loop completed: 50 total moves in 0.24s
+[optimizer] Sorted 50 moves by effectiveness (ease_gain descending)
+[optimizer] planned moves=50 (limit=50)
+[optimizer] Auto-enforce is enabled, starting constraint enforcement
+[optimizer] Calling enforce_constraints with 50 moves
+[optimizer] constraints accepted=50/50; rejects: oversize=0, forbidden=0, capacity=0, fifo=0, pack_band=0, other=0
+[optimizer] enforce_constraints completed: 50 accepted out of 50
+[optimizer] Generating summary report: accepted=50, rejected=0
+[_generate_relocation_summary] Starting: moves=50, rejected=0
+[_generate_relocation_summary] Completed: keys=['total_planned', 'total_rejected', 'total_accepted', 'affected_skus', 'from_locations', 'to_locations', 'total_cases', 'sku_consolidation', 'lot_mixing_issues', 'lot_mixing_details', 'recommendations', 'move_rate_percent']
+[optimizer] Summary report generated: ['total_planned', 'total_rejected', 'total_accepted', 'affected_skus', 'from_locations', 'to_locations', 'total_cases', 'sku_consolidation', 'lot_mixing_issues', 'lot_mixing_details', 'recommendations', 'move_rate_percent']
+[optimizer] Report formatted, 29 lines
+[optimizer] Summary report published via SSE
+[optimizer] Summary Report:
+[optimizer] location_master provided: slots=2765 receivable=2765 (filtered from 2765)
+[optimizer] sku_master cols=['商品ID', '入数', 'volume_m3', '商品予備項目００６'] rows=3450
+[optimizer] after block_filter=None rows=3251
+[optimizer] after quality_filter=None rows=3251
+[optimizer] carton_volume_map size=3450
+[optimizer] qty_cases_move min=1 max=149
+[optimizer] dominant_pack_by_col keys=1 thr=0.7
+[optimizer] shelf_usage locations=3508 (cap=1.2349999999999999)
+[optimizer] pass0_area_rebalance moves=48
+[optimizer] Pass-0 area_rebalance: moves=48 time=2.70s total=48
+[optimizer] pass1_pick_storage_balance (with swap) moves=1
+[optimizer] Pass-1 pick/storage: moves=1 time=1.30s total=49
+[optimizer] Pre-cached 5 levels with locations
+[optimizer] main: processed 39/799; moves=49 remaining=1
+[optimizer] main: processed 78/799; moves=49 remaining=1
+[optimizer] main: processed 117/799; moves=49 remaining=1
+[optimizer] main: processed 156/799; moves=49 remaining=1
+[optimizer] main: processed 195/799; moves=49 remaining=1
+[optimizer] main: processed 234/799; moves=49 remaining=1
+[optimizer] main: processed 273/799; moves=49 remaining=1
+[optimizer] main: processed 312/799; moves=49 remaining=1
+[optimizer] main: processed 351/799; moves=49 remaining=1
+[optimizer] main: processed 390/799; moves=49 remaining=1
+[optimizer] main: processed 429/799; moves=49 remaining=1
+[optimizer] main: processed 468/799; moves=49 remaining=1
+[optimizer] main: processed 507/799; moves=49 remaining=1
+[optimizer] main: processed 546/799; moves=49 remaining=1
+[optimizer] main: processed 585/799; moves=49 remaining=1
+[optimizer] Main loop completed: 50 total moves in 0.25s
+[optimizer] Sorted 50 moves by effectiveness (ease_gain descending)
+[optimizer] planned moves=50 (limit=50)
+[optimizer] Auto-enforce is enabled, starting constraint enforcement
+[optimizer] Calling enforce_constraints with 50 moves
+[optimizer] constraints accepted=50/50; rejects: oversize=0, forbidden=0, capacity=0, fifo=0, pack_band=0, other=0
+[optimizer] enforce_constraints completed: 50 accepted out of 50
+[optimizer] Generating summary report: accepted=50, rejected=0
+[_generate_relocation_summary] Starting: moves=50, rejected=0
+[_generate_relocation_summary] Completed: keys=['total_planned', 'total_rejected', 'total_accepted', 'affected_skus', 'from_locations', 'to_locations', 'total_cases', 'sku_consolidation', 'lot_mixing_issues', 'lot_mixing_details', 'recommendations', 'move_rate_percent']
+[optimizer] Summary report generated: ['total_planned', 'total_rejected', 'total_accepted', 'affected_skus', 'from_locations', 'to_locations', 'total_cases', 'sku_consolidation', 'lot_mixing_issues', 'lot_mixing_details', 'recommendations', 'move_rate_percent']
+[optimizer] Report formatted, 29 lines
+[optimizer] Summary report published via SSE
+[optimizer] Summary Report:
+WARNING:  WatchFiles detected changes in 'app/services/optimizer.py'. Reloading...
+[main] Loaded env files: /Users/kounoyousuke/warehouse-optimizer/backend/.env, /Users/kounoyousuke/warehouse-optimizer/.env
+INFO:     Will watch for changes in these directories: ['/Users/kounoyousuke/warehouse-optimizer/backend']
+[main] Loaded env files: /Users/kounoyousuke/warehouse-optimizer/backend/.env, /Users/kounoyousuke/warehouse-optimizer/.env
+[optimizer] location_master provided: slots=2765 receivable=2765 (filtered from 2765)
+[optimizer] sku_master cols=['商品ID', '入数', 'volume_m3', '商品予備項目００６'] rows=3450
+[optimizer] after block_filter=None rows=3251
+[optimizer] after quality_filter=None rows=3251
+[optimizer] carton_volume_map size=3450
+[optimizer] qty_cases_move min=1 max=149
+[optimizer] dominant_pack_by_col keys=1 thr=0.7
+[optimizer] shelf_usage locations=3508 (cap=1.2349999999999999)
+[optimizer] pass0_area_rebalance moves=49
+[optimizer] Pass-0 area_rebalance: moves=49 time=2.29s total=49
+[optimizer] pass1_pick_storage_balance (with swap) moves=1
+[optimizer] Pass-1 pick/storage: moves=1 time=1.27s total=50
+[optimizer] Pre-cached 5 levels with locations
+[optimizer] Main loop completed: 50 total moves in 0.00s
+[optimizer] Sorted 50 moves by effectiveness (ease_gain descending)
+[optimizer] planned moves=50 (limit=50)
+[optimizer] Auto-enforce is enabled, starting constraint enforcement
+[optimizer] Calling enforce_constraints with 50 moves
+[optimizer] constraints accepted=50/50; rejects: oversize=0, forbidden=0, capacity=0, fifo=0, pack_band=0, other=0
+[optimizer] enforce_constraints completed: 50 accepted out of 50
+[optimizer] Generating summary report: accepted=50, rejected=0
+[_generate_relocation_summary] Starting: moves=50, rejected=0
+[_generate_relocation_summary] Completed: keys=['total_planned', 'total_rejected', 'total_accepted', 'affected_skus', 'from_locations', 'to_locations', 'total_cases', 'sku_consolidation', 'lot_mixing_issues', 'lot_mixing_details', 'recommendations', 'move_rate_percent']
+[optimizer] Summary report generated: ['total_planned', 'total_rejected', 'total_accepted', 'affected_skus', 'from_locations', 'to_locations', 'total_cases', 'sku_consolidation', 'lot_mixing_issues', 'lot_mixing_details', 'recommendations', 'move_rate_percent']
+[optimizer] Report formatted, 29 lines
+[optimizer] Summary Report:
+[optimizer] Summary report published via SSE
+[optimizer] location_master provided: slots=2765 receivable=2765 (filtered from 2765)
+[optimizer] sku_master cols=['商品ID', '入数', 'volume_m3', '商品予備項目００６'] rows=3450
+[optimizer] after block_filter=None rows=3251
+[optimizer] after quality_filter=None rows=3251
+[optimizer] carton_volume_map size=3450
+[optimizer] qty_cases_move min=1 max=149
+[optimizer] dominant_pack_by_col keys=1 thr=0.7
+[optimizer] shelf_usage locations=3508 (cap=1.2349999999999999)
+[optimizer] pass0_area_rebalance moves=49
+[optimizer] Pass-0 area_rebalance: moves=49 time=2.27s total=49
+[optimizer] pass1_pick_storage_balance (with swap) moves=1
+[optimizer] Pass-1 pick/storage: moves=1 time=1.24s total=50
+[optimizer] Pre-cached 5 levels with locations
+[optimizer] Main loop completed: 50 total moves in 0.00s
+[optimizer] Sorted 50 moves by effectiveness (ease_gain descending)
+[optimizer] planned moves=50 (limit=50)
+[optimizer] Auto-enforce is enabled, starting constraint enforcement
+[optimizer] Calling enforce_constraints with 50 moves
+[optimizer] constraints accepted=50/50; rejects: oversize=0, forbidden=0, capacity=0, fifo=0, pack_band=0, other=0
+[optimizer] enforce_constraints completed: 50 accepted out of 50
+[optimizer] Generating summary report: accepted=50, rejected=0
+[_generate_relocation_summary] Starting: moves=50, rejected=0
+[_generate_relocation_summary] Completed: keys=['total_planned', 'total_rejected', 'total_accepted', 'affected_skus', 'from_locations', 'to_locations', 'total_cases', 'sku_consolidation', 'lot_mixing_issues', 'lot_mixing_details', 'recommendations', 'move_rate_percent']
+[optimizer] Summary report generated: ['total_planned', 'total_rejected', 'total_accepted', 'affected_skus', 'from_locations', 'to_locations', 'total_cases', 'sku_consolidation', 'lot_mixing_issues', 'lot_mixing_details', 'recommendations', 'move_rate_percent']
+[optimizer] Report formatted, 29 lines
+[optimizer] Summary Report:
+[optimizer] Summary report published via SSE
+WARNING:  WatchFiles detected changes in 'app/services/optimizer.py'. Reloading...
+[main] Loaded env files: /Users/kounoyousuke/warehouse-optimizer/backend/.env, /Users/kounoyousuke/warehouse-optimizer/.env
+INFO:     Will watch for changes in these directories: ['/Users/kounoyousuke/warehouse-optimizer/backend']
+[main] Loaded env files: /Users/kounoyousuke/warehouse-optimizer/backend/.env, /Users/kounoyousuke/warehouse-optimizer/.env
+[optimizer] location_master provided: slots=2765 receivable=2765 (filtered from 2765)
+[optimizer] sku_master cols=['商品ID', '入数', 'volume_m3', '商品予備項目００６'] rows=3450
+[optimizer] after block_filter=None rows=3251
+[optimizer] after quality_filter=None rows=3251
+[optimizer] carton_volume_map size=3450
+[optimizer] qty_cases_move min=1 max=149
+[optimizer] dominant_pack_by_col keys=1 thr=0.7
+[optimizer] shelf_usage locations=3508 (cap=1.2349999999999999)
+[optimizer] pass0_area_rebalance moves=50
+[optimizer] Pass-0 area_rebalance: moves=50 time=3.45s total=50
+[optimizer] Pass-1 pick/storage: moves=0 time=1.25s total=50
+[optimizer] Pre-cached 5 levels with locations
+[optimizer] Main loop completed: 50 total moves in 0.00s
+[optimizer] Sorted 50 moves by effectiveness (ease_gain descending)
+[optimizer] planned moves=50 (limit=50)
+[optimizer] Auto-enforce is enabled, starting constraint enforcement
+[optimizer] Calling enforce_constraints with 50 moves
+[optimizer] constraints accepted=50/50; rejects: oversize=0, forbidden=0, capacity=0, fifo=0, pack_band=0, other=0
+[optimizer] enforce_constraints completed: 50 accepted out of 50
+[optimizer] Generating summary report: accepted=50, rejected=0
+[_generate_relocation_summary] Starting: moves=50, rejected=0
+[_generate_relocation_summary] Completed: keys=['total_planned', 'total_rejected', 'total_accepted', 'affected_skus', 'from_locations', 'to_locations', 'total_cases', 'sku_consolidation', 'lot_mixing_issues', 'lot_mixing_details', 'recommendations', 'move_rate_percent']
+[optimizer] Summary report generated: ['total_planned', 'total_rejected', 'total_accepted', 'affected_skus', 'from_locations', 'to_locations', 'total_cases', 'sku_consolidation', 'lot_mixing_issues', 'lot_mixing_details', 'recommendations', 'move_rate_percent']
+[optimizer] Report formatted, 29 lines
+[optimizer] Summary Report:
+[_publish_progress] Publishing summary_report to trace_id=0dd5aa2a375a
+[optimizer] Summary report published via SSE
+[optimizer] location_master provided: slots=2765 receivable=2765 (filtered from 2765)
+[optimizer] sku_master cols=['商品ID', '入数', 'volume_m3', '商品予備項目００６'] rows=3450
+[optimizer] after block_filter=None rows=3251
+[optimizer] after quality_filter=None rows=3251
+[optimizer] carton_volume_map size=3450
+[optimizer] qty_cases_move min=1 max=149
+[optimizer] dominant_pack_by_col keys=1 thr=0.7
+[optimizer] shelf_usage locations=3508 (cap=1.2349999999999999)
+[optimizer] pass0_area_rebalance moves=50
+[optimizer] Pass-0 area_rebalance: moves=50 time=3.44s total=50
+[optimizer] Pass-1 pick/storage: moves=0 time=1.24s total=50
+[optimizer] Pre-cached 5 levels with locations
+[optimizer] Main loop completed: 50 total moves in 0.00s
+[optimizer] Sorted 50 moves by effectiveness (ease_gain descending)
+[optimizer] planned moves=50 (limit=50)
+[optimizer] Auto-enforce is enabled, starting constraint enforcement
+[optimizer] Calling enforce_constraints with 50 moves
+[optimizer] constraints accepted=50/50; rejects: oversize=0, forbidden=0, capacity=0, fifo=0, pack_band=0, other=0
+[optimizer] enforce_constraints completed: 50 accepted out of 50
+[optimizer] Generating summary report: accepted=50, rejected=0
+[_generate_relocation_summary] Starting: moves=50, rejected=0
+[_generate_relocation_summary] Completed: keys=['total_planned', 'total_rejected', 'total_accepted', 'affected_skus', 'from_locations', 'to_locations', 'total_cases', 'sku_consolidation', 'lot_mixing_issues', 'lot_mixing_details', 'recommendations', 'move_rate_percent']
+[optimizer] Summary report generated: ['total_planned', 'total_rejected', 'total_accepted', 'affected_skus', 'from_locations', 'to_locations', 'total_cases', 'sku_consolidation', 'lot_mixing_issues', 'lot_mixing_details', 'recommendations', 'move_rate_percent']
+[optimizer] Report formatted, 29 lines
+[optimizer] Summary Report:
+[_publish_progress] Publishing summary_report to trace_id=a4442617f39c
+[optimizer] Summary report published via SSE
+[optimizer] location_master provided: slots=2765 receivable=2765 (filtered from 2765)
+[optimizer] sku_master cols=['商品ID', '入数', 'volume_m3', '商品予備項目００６'] rows=3450
+[optimizer] after block_filter=None rows=3251
+[optimizer] after quality_filter=None rows=3251
+[optimizer] carton_volume_map size=3450
+[optimizer] qty_cases_move min=1 max=149
+[optimizer] dominant_pack_by_col keys=1 thr=0.7
+[optimizer] shelf_usage locations=3508 (cap=1.2349999999999999)
+[optimizer] pass0_area_rebalance moves=50
+[optimizer] Pass-0 area_rebalance: moves=50 time=3.62s total=50
+[optimizer] Pass-1 pick/storage: moves=0 time=1.28s total=50
+[optimizer] Pre-cached 5 levels with locations
+[optimizer] Main loop completed: 50 total moves in 0.00s
+[optimizer] Sorted 50 moves by effectiveness (ease_gain descending)
+[optimizer] planned moves=50 (limit=50)
+[optimizer] Auto-enforce is enabled, starting constraint enforcement
+[optimizer] Calling enforce_constraints with 50 moves
+[optimizer] constraints accepted=50/50; rejects: oversize=0, forbidden=0, capacity=0, fifo=0, pack_band=0, other=0
+[optimizer] enforce_constraints completed: 50 accepted out of 50
+[optimizer] Generating summary report: accepted=50, rejected=0
+[_generate_relocation_summary] Starting: moves=50, rejected=0
+[_generate_relocation_summary] Completed: keys=['total_planned', 'total_rejected', 'total_accepted', 'affected_skus', 'from_locations', 'to_locations', 'total_cases', 'sku_consolidation', 'lot_mixing_issues', 'lot_mixing_details', 'recommendations', 'move_rate_percent']
+[optimizer] Summary report generated: ['total_planned', 'total_rejected', 'total_accepted', 'affected_skus', 'from_locations', 'to_locations', 'total_cases', 'sku_consolidation', 'lot_mixing_issues', 'lot_mixing_details', 'recommendations', 'move_rate_percent']
+[optimizer] Report formatted, 29 lines
+[optimizer] Summary Report:
+[_publish_progress] Publishing summary_report to trace_id=8172be31d95c
+[optimizer] Summary report published via SSE
+[optimizer] location_master provided: slots=2765 receivable=2765 (filtered from 2765)
+[optimizer] sku_master cols=['商品ID', '入数', 'volume_m3', '商品予備項目００６'] rows=3450
+[optimizer] after block_filter=None rows=3251
+[optimizer] after quality_filter=None rows=3251
+[optimizer] carton_volume_map size=3450
+[optimizer] qty_cases_move min=1 max=149
+[optimizer] dominant_pack_by_col keys=1 thr=0.7
+[optimizer] shelf_usage locations=3508 (cap=1.2349999999999999)
+[optimizer] pass0_area_rebalance moves=50
+[optimizer] Pass-0 area_rebalance: moves=50 time=3.54s total=50
+[optimizer] Pass-1 pick/storage: moves=0 time=1.28s total=50
+[optimizer] Pre-cached 5 levels with locations
+[optimizer] Main loop completed: 50 total moves in 0.00s
+[optimizer] Sorted 50 moves by effectiveness (ease_gain descending)
+[optimizer] planned moves=50 (limit=50)
+[optimizer] Auto-enforce is enabled, starting constraint enforcement
+[optimizer] Calling enforce_constraints with 50 moves
+[optimizer] constraints accepted=50/50; rejects: oversize=0, forbidden=0, capacity=0, fifo=0, pack_band=0, other=0
+[optimizer] enforce_constraints completed: 50 accepted out of 50
+[optimizer] Generating summary report: accepted=50, rejected=0
+[_generate_relocation_summary] Starting: moves=50, rejected=0
+[_generate_relocation_summary] Completed: keys=['total_planned', 'total_rejected', 'total_accepted', 'affected_skus', 'from_locations', 'to_locations', 'total_cases', 'sku_consolidation', 'lot_mixing_issues', 'lot_mixing_details', 'recommendations', 'move_rate_percent']
+[optimizer] Summary report generated: ['total_planned', 'total_rejected', 'total_accepted', 'affected_skus', 'from_locations', 'to_locations', 'total_cases', 'sku_consolidation', 'lot_mixing_issues', 'lot_mixing_details', 'recommendations', 'move_rate_percent']
+[optimizer] Report formatted, 29 lines
+[optimizer] Summary Report:
+[_publish_progress] Publishing summary_report to trace_id=c1a1311a82e7
+[optimizer] Summary report published via SSE
+WARNING:  WatchFiles detected changes in 'app/services/optimizer.py'. Reloading...
+[main] Loaded env files: /Users/kounoyousuke/warehouse-optimizer/backend/.env, /Users/kounoyousuke/warehouse-optimizer/.env
+WARNING:  WatchFiles detected changes in 'app/services/optimizer.py'. Reloading...
+[main] Loaded env files: /Users/kounoyousuke/warehouse-optimizer/backend/.env, /Users/kounoyousuke/warehouse-optimizer/.env
+WARNING:  WatchFiles detected changes in 'app/services/optimizer.py'. Reloading...
+[main] Loaded env files: /Users/kounoyousuke/warehouse-optimizer/backend/.env, /Users/kounoyousuke/warehouse-optimizer/.env
+[main] Loaded env files: /Users/kounoyousuke/warehouse-optimizer/backend/.env, /Users/kounoyousuke/warehouse-optimizer/.env
+INFO:     Will watch for changes in these directories: ['/Users/kounoyousuke/warehouse-optimizer/backend']
+[main] Loaded env files: /Users/kounoyousuke/warehouse-optimizer/backend/.env, /Users/kounoyousuke/warehouse-optimizer/.env
+[optimizer] location_master provided: slots=2765 receivable=2765 (filtered from 2765)
+[optimizer] sku_master cols=['商品ID', '入数', 'volume_m3', '商品予備項目００６'] rows=3450
+[optimizer] after block_filter=None rows=3251
+[optimizer] after quality_filter=None rows=3251
+[optimizer] carton_volume_map size=3450
+[optimizer] qty_cases_move min=1 max=149
+[optimizer] dominant_pack_by_col keys=1 thr=0.7
+[optimizer] shelf_usage locations=3508 (cap=1.2349999999999999)
+[optimizer] pass0_area_rebalance moves=50
+[optimizer] Pass-0 area_rebalance: moves=50 time=1.86s total=50
+[optimizer] Pass-1 pick/storage: moves=0 time=1.28s total=50
+[optimizer] Pre-cached 5 levels with locations
+[optimizer] Main loop completed: 50 total moves in 0.00s
+[optimizer] Sorted 50 moves by effectiveness (ease_gain descending)
+[optimizer] planned moves=50 (limit=50)
+[optimizer] Auto-enforce is enabled, starting constraint enforcement
+[optimizer] Calling enforce_constraints with 50 moves
+[optimizer] constraints accepted=50/50; rejects: oversize=0, forbidden=0, capacity=0, fifo=0, pack_band=0, other=0
+[optimizer] enforce_constraints completed: 50 accepted out of 50
+[optimizer] Generating summary report: accepted=50, rejected=0
+[_generate_relocation_summary] Starting: moves=50, rejected=0
+[_generate_relocation_summary] Completed: keys=['total_planned', 'total_rejected', 'total_accepted', 'affected_skus', 'from_locations', 'to_locations', 'total_cases', 'sku_consolidation', 'lot_mixing_issues', 'lot_mixing_details', 'recommendations', 'move_rate_percent']
+[optimizer] Summary report generated: ['total_planned', 'total_rejected', 'total_accepted', 'affected_skus', 'from_locations', 'to_locations', 'total_cases', 'sku_consolidation', 'lot_mixing_issues', 'lot_mixing_details', 'recommendations', 'move_rate_percent']
+[optimizer] Report formatted, 29 lines
+[optimizer] Summary Report:
+[_publish_progress] Publishing summary_report to trace_id=e0d899269ac1
+[optimizer] Summary report published via SSE
+[optimizer] location_master provided: slots=2765 receivable=2765 (filtered from 2765)
+[optimizer] sku_master cols=['商品ID', '入数', 'volume_m3', '商品予備項目００６'] rows=3450
+[optimizer] after block_filter=None rows=3251
+[optimizer] after quality_filter=None rows=3251
+[optimizer] carton_volume_map size=3450
+[optimizer] qty_cases_move min=1 max=149
+[optimizer] dominant_pack_by_col keys=1 thr=0.7
+[optimizer] shelf_usage locations=3508 (cap=1.2349999999999999)
+[optimizer] pass0_area_rebalance moves=50
+[optimizer] Pass-0 area_rebalance: moves=50 time=1.84s total=50
+[optimizer] Pass-1 pick/storage: moves=0 time=1.29s total=50
+[optimizer] Pre-cached 5 levels with locations
+[optimizer] Main loop completed: 50 total moves in 0.00s
+[optimizer] Sorted 50 moves by effectiveness (ease_gain descending)
+[optimizer] planned moves=50 (limit=50)
+[optimizer] Auto-enforce is enabled, starting constraint enforcement
+[optimizer] Calling enforce_constraints with 50 moves
+[optimizer] constraints accepted=50/50; rejects: oversize=0, forbidden=0, capacity=0, fifo=0, pack_band=0, other=0
+[optimizer] enforce_constraints completed: 50 accepted out of 50
+[optimizer] Generating summary report: accepted=50, rejected=0
+[_generate_relocation_summary] Starting: moves=50, rejected=0
+[_generate_relocation_summary] Completed: keys=['total_planned', 'total_rejected', 'total_accepted', 'affected_skus', 'from_locations', 'to_locations', 'total_cases', 'sku_consolidation', 'lot_mixing_issues', 'lot_mixing_details', 'recommendations', 'move_rate_percent']
+[optimizer] Summary report generated: ['total_planned', 'total_rejected', 'total_accepted', 'affected_skus', 'from_locations', 'to_locations', 'total_cases', 'sku_consolidation', 'lot_mixing_issues', 'lot_mixing_details', 'recommendations', 'move_rate_percent']
+[optimizer] Report formatted, 29 lines
+[optimizer] Summary Report:
+[_publish_progress] Publishing summary_report to trace_id=3a3a035c42e3
+[optimizer] Summary report published via SSE
+[optimizer] location_master provided: slots=2765 receivable=2765 (filtered from 2765)
+[optimizer] sku_master cols=['商品ID', '入数', 'volume_m3', '商品予備項目００６'] rows=3450
+[optimizer] after block_filter=None rows=3251
+[optimizer] after quality_filter=None rows=3251
+[optimizer] carton_volume_map size=3450
+[optimizer] qty_cases_move min=1 max=149
+[optimizer] dominant_pack_by_col keys=1 thr=0.7
+[optimizer] shelf_usage locations=3508 (cap=1.2349999999999999)
+[optimizer] location_master provided: slots=2765 receivable=2765 (filtered from 2765)
+[optimizer] sku_master cols=['商品ID', '入数', 'volume_m3', '商品予備項目００６'] rows=3450
+[optimizer] after block_filter=None rows=3251
+[optimizer] after quality_filter=None rows=3251
+[optimizer] carton_volume_map size=3450
+[optimizer] qty_cases_move min=1 max=149
+[optimizer] dominant_pack_by_col keys=1 thr=0.7
+[optimizer] shelf_usage locations=3508 (cap=1.2349999999999999)
+[optimizer] pass0_area_rebalance moves=298
+[optimizer] Pass-0 area_rebalance: moves=298 time=3425.60s total=298
+[optimizer] Pass-1 pick/storage: moves=2 time=1.34s total=300
+[optimizer] Pre-cached 5 levels with locations
+[optimizer] Main loop completed: 300 total moves in 0.00s
+[optimizer] Sorted 300 moves by effectiveness (ease_gain descending)
+[optimizer] planned moves=300 (limit=300)
+[optimizer] Auto-enforce is enabled, starting constraint enforcement
+[optimizer] Calling enforce_constraints with 300 moves
+[optimizer] constraints accepted=300/300; rejects: oversize=0, forbidden=0, capacity=0, fifo=0, pack_band=0, other=0
+[optimizer] enforce_constraints completed: 300 accepted out of 300
+[optimizer] Generating summary report: accepted=300, rejected=0
+[_generate_relocation_summary] Starting: moves=300, rejected=0
+[_generate_relocation_summary] Completed: keys=['total_planned', 'total_rejected', 'total_accepted', 'affected_skus', 'from_locations', 'to_locations', 'total_cases', 'sku_consolidation', 'lot_mixing_issues', 'lot_mixing_details', 'recommendations', 'move_rate_percent']
+[optimizer] Summary report generated: ['total_planned', 'total_rejected', 'total_accepted', 'affected_skus', 'from_locations', 'to_locations', 'total_cases', 'sku_consolidation', 'lot_mixing_issues', 'lot_mixing_details', 'recommendations', 'move_rate_percent']
+[optimizer] Report formatted, 29 lines
+[optimizer] Summary Report:
+[_publish_progress] Publishing summary_report to trace_id=73525b559f6f
+[optimizer] Summary report published via SSE
+[optimizer] pass0_area_rebalance moves=298
+[optimizer] Pass-0 area_rebalance: moves=298 time=3438.71s total=298
+[optimizer] Pass-1 pick/storage: moves=2 time=0.99s total=300
+[optimizer] Pre-cached 5 levels with locations
+[optimizer] Main loop completed: 300 total moves in 0.00s
+[optimizer] Sorted 300 moves by effectiveness (ease_gain descending)
+[optimizer] planned moves=300 (limit=300)
+[optimizer] Auto-enforce is enabled, starting constraint enforcement
+[optimizer] Calling enforce_constraints with 300 moves
+[optimizer] constraints accepted=300/300; rejects: oversize=0, forbidden=0, capacity=0, fifo=0, pack_band=0, other=0
+[optimizer] enforce_constraints completed: 300 accepted out of 300
+[optimizer] Generating summary report: accepted=300, rejected=0
+[_generate_relocation_summary] Starting: moves=300, rejected=0
+[_generate_relocation_summary] Completed: keys=['total_planned', 'total_rejected', 'total_accepted', 'affected_skus', 'from_locations', 'to_locations', 'total_cases', 'sku_consolidation', 'lot_mixing_issues', 'lot_mixing_details', 'recommendations', 'move_rate_percent']
+[optimizer] Summary report generated: ['total_planned', 'total_rejected', 'total_accepted', 'affected_skus', 'from_locations', 'to_locations', 'total_cases', 'sku_consolidation', 'lot_mixing_issues', 'lot_mixing_details', 'recommendations', 'move_rate_percent']
+[optimizer] Report formatted, 29 lines
+[optimizer] Summary Report:
+[_publish_progress] Publishing summary_report to trace_id=73525b559f6f
+[optimizer] Summary report published via SSE
+[optimizer] location_master provided: slots=2765 receivable=2765 (filtered from 2765)
+[optimizer] sku_master cols=['商品ID', '入数', 'volume_m3', '商品予備項目００６'] rows=3450
+[optimizer] after block_filter=None rows=3251
+[optimizer] after quality_filter=None rows=3251
+[optimizer] carton_volume_map size=3450
+[optimizer] qty_cases_move min=1 max=149
+[optimizer] dominant_pack_by_col keys=1 thr=0.7
+[optimizer] shelf_usage locations=3508 (cap=1.2349999999999999)
+[optimizer] pass0_area_rebalance moves=50
+[optimizer] Pass-0 area_rebalance: moves=50 time=1.86s total=50
+[optimizer] Pass-1 pick/storage: moves=0 time=1.31s total=50
+[optimizer] Pre-cached 5 levels with locations
+[optimizer] Main loop completed: 50 total moves in 0.00s
+[optimizer] Sorted 50 moves by effectiveness (ease_gain descending)
+[optimizer] planned moves=50 (limit=50)
+[optimizer] Auto-enforce is enabled, starting constraint enforcement
+[optimizer] Calling enforce_constraints with 50 moves
+[optimizer] constraints accepted=50/50; rejects: oversize=0, forbidden=0, capacity=0, fifo=0, pack_band=0, other=0
+[optimizer] enforce_constraints completed: 50 accepted out of 50
+[optimizer] Generating summary report: accepted=50, rejected=0
+[_generate_relocation_summary] Starting: moves=50, rejected=0
+[_generate_relocation_summary] Completed: keys=['total_planned', 'total_rejected', 'total_accepted', 'affected_skus', 'from_locations', 'to_locations', 'total_cases', 'sku_consolidation', 'lot_mixing_issues', 'lot_mixing_details', 'recommendations', 'move_rate_percent']
+[optimizer] Summary report generated: ['total_planned', 'total_rejected', 'total_accepted', 'affected_skus', 'from_locations', 'to_locations', 'total_cases', 'sku_consolidation', 'lot_mixing_issues', 'lot_mixing_details', 'recommendations', 'move_rate_percent']
+[optimizer] Report formatted, 29 lines
+[optimizer] Summary Report:
+[_publish_progress] Publishing summary_report to trace_id=5006bee8eaf7
+[optimizer] Summary report published via SSE
+[optimizer] location_master provided: slots=2765 receivable=2765 (filtered from 2765)
+[optimizer] sku_master cols=['商品ID', '入数', 'volume_m3', '商品予備項目００６'] rows=3450
+[optimizer] after block_filter=None rows=3251
+[optimizer] after quality_filter=None rows=3251
+[optimizer] carton_volume_map size=3450
+[optimizer] qty_cases_move min=1 max=149
+[optimizer] dominant_pack_by_col keys=1 thr=0.7
+[optimizer] shelf_usage locations=3508 (cap=1.2349999999999999)
+[optimizer] pass0_area_rebalance moves=50
+[optimizer] Pass-0 area_rebalance: moves=50 time=1.86s total=50
+[optimizer] Pass-1 pick/storage: moves=0 time=1.27s total=50
+  File "/Users/kounoyousuke/warehouse-optimizer/backend/app/routers/upload.py", line 3490, in relocation_start_final_moves
+  File "/Users/kounoyousuke/warehouse-optimizer/backend/app/routers/upload.py", line 3432, in _consolidate_eviction_chains
+[optimizer] Pre-cached 5 levels with locations
+[optimizer] Main loop completed: 50 total moves in 0.00s
+[optimizer] Sorted 50 moves by effectiveness (ease_gain descending)
+[optimizer] planned moves=50 (limit=50)
+[optimizer] Auto-enforce is enabled, starting constraint enforcement
+[optimizer] Calling enforce_constraints with 50 moves
+[optimizer] constraints accepted=50/50; rejects: oversize=0, forbidden=0, capacity=0, fifo=0, pack_band=0, other=0
+[optimizer] enforce_constraints completed: 50 accepted out of 50
+[optimizer] Generating summary report: accepted=50, rejected=0
+[_generate_relocation_summary] Starting: moves=50, rejected=0
+[_generate_relocation_summary] Completed: keys=['total_planned', 'total_rejected', 'total_accepted', 'affected_skus', 'from_locations', 'to_locations', 'total_cases', 'sku_consolidation', 'lot_mixing_issues', 'lot_mixing_details', 'recommendations', 'move_rate_percent']
+[optimizer] Summary report generated: ['total_planned', 'total_rejected', 'total_accepted', 'affected_skus', 'from_locations', 'to_locations', 'total_cases', 'sku_consolidation', 'lot_mixing_issues', 'lot_mixing_details', 'recommendations', 'move_rate_percent']
+[optimizer] Report formatted, 29 lines
+[optimizer] Summary Report:
+[_publish_progress] Publishing summary_report to trace_id=215c438f3e30
+[optimizer] Summary report published via SSE
+[optimizer] location_master provided: slots=2765 receivable=2765 (filtered from 2765)
+[optimizer] sku_master cols=['商品ID', '入数', 'volume_m3', '商品予備項目００６'] rows=3450
+[optimizer] after block_filter=None rows=3251
+[optimizer] after quality_filter=None rows=3251
+[optimizer] carton_volume_map size=3450
+[optimizer] qty_cases_move min=1 max=149
+[optimizer] dominant_pack_by_col keys=1 thr=0.7
+[optimizer] shelf_usage locations=3508 (cap=1.2349999999999999)
+[optimizer] pass0_area_rebalance moves=50
+[optimizer] Pass-0 area_rebalance: moves=50 time=1.87s total=50
+[optimizer] Pass-1 pick/storage: moves=0 time=1.29s total=50
+  File "/Users/kounoyousuke/warehouse-optimizer/backend/app/routers/upload.py", line 3490, in relocation_start_final_moves
+  File "/Users/kounoyousuke/warehouse-optimizer/backend/app/routers/upload.py", line 3432, in _consolidate_eviction_chains
+[optimizer] Pre-cached 5 levels with locations
+[optimizer] Main loop completed: 50 total moves in 0.00s
+[optimizer] Sorted 50 moves by effectiveness (ease_gain descending)
+[optimizer] planned moves=50 (limit=50)
+[optimizer] Auto-enforce is enabled, starting constraint enforcement
+[optimizer] Calling enforce_constraints with 50 moves
+[optimizer] constraints accepted=50/50; rejects: oversize=0, forbidden=0, capacity=0, fifo=0, pack_band=0, other=0
+[optimizer] enforce_constraints completed: 50 accepted out of 50
+[optimizer] Generating summary report: accepted=50, rejected=0
+[_generate_relocation_summary] Starting: moves=50, rejected=0
+[_generate_relocation_summary] Completed: keys=['total_planned', 'total_rejected', 'total_accepted', 'affected_skus', 'from_locations', 'to_locations', 'total_cases', 'sku_consolidation', 'lot_mixing_issues', 'lot_mixing_details', 'recommendations', 'move_rate_percent']
+[optimizer] Summary report generated: ['total_planned', 'total_rejected', 'total_accepted', 'affected_skus', 'from_locations', 'to_locations', 'total_cases', 'sku_consolidation', 'lot_mixing_issues', 'lot_mixing_details', 'recommendations', 'move_rate_percent']
+[optimizer] Report formatted, 29 lines
+[optimizer] Summary Report:
+[_publish_progress] Publishing summary_report to trace_id=b937bb687e5c
+[optimizer] Summary report published via SSE
+WARNING:  WatchFiles detected changes in 'app/services/optimizer.py'. Reloading...
+[main] Loaded env files: /Users/kounoyousuke/warehouse-optimizer/backend/.env, /Users/kounoyousuke/warehouse-optimizer/.env
+WARNING:  WatchFiles detected changes in 'app/services/optimizer.py'. Reloading...
+[main] Loaded env files: /Users/kounoyousuke/warehouse-optimizer/backend/.env, /Users/kounoyousuke/warehouse-optimizer/.env
+WARNING:  WatchFiles detected changes in 'app/services/optimizer.py'. Reloading...
+[main] Loaded env files: /Users/kounoyousuke/warehouse-optimizer/backend/.env, /Users/kounoyousuke/warehouse-optimizer/.env
+WARNING:  WatchFiles detected changes in 'app/services/optimizer.py'. Reloading...
+[main] Loaded env files: /Users/kounoyousuke/warehouse-optimizer/backend/.env, /Users/kounoyousuke/warehouse-optimizer/.env
+WARNING:  WatchFiles detected changes in 'app/services/optimizer.py'. Reloading...
+[main] Loaded env files: /Users/kounoyousuke/warehouse-optimizer/backend/.env, /Users/kounoyousuke/warehouse-optimizer/.env
+WARNING:  WatchFiles detected changes in 'app/services/optimizer.py'. Reloading...
+[main] Loaded env files: /Users/kounoyousuke/warehouse-optimizer/backend/.env, /Users/kounoyousuke/warehouse-optimizer/.env

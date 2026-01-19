@@ -39,6 +39,9 @@ from .inventory import Inventory  # noqa: F401
 # --- Flow (ship / receive) -------------------------------------------------
 from .flow import ShipTx, RecvTx  # noqa: F401
 
+# --- Location Master -------------------------------------------------------
+from .location_master import LocationMaster  # noqa: F401
+
 # --- Metrics & relocation --------------------------------------------------
 # (Add subsequent models here as they are implemented)
 # from .metrics import SkuMetrics  # noqa: F401

@@ -1,3 +1,13 @@
+def _detect_block_series(df: pd.DataFrame) -> Optional[pd.Series]:
+    """Return a Series of block codes if an obvious block/zone column exists, else None."""
+    if df is None or df.empty:
+        return None
+    candidates = ["block", "Block", "BLOCK", "ブロック", "倉庫ブロック", "ゾーン", "zone", "Zone", "ZONE", "エリア", "area"]
+    for c in candidates:
+        if c in df.columns:
+            s = df[c].astype(str)
+            return s
+    return None
 # app/services/ai_planner.py
 from __future__ import annotations
 from typing import Dict, List, Any, Optional
@@ -106,6 +116,7 @@ def build_ai_summary(sku_master: pd.DataFrame, inventory: pd.DataFrame, cfg: Opt
     """AIに渡す軽量サマリ（列代表入数・列空き容量・SKU別の現状配列）。
     - 空き容量は列内のスロット数（distinct (level, depth)）× 棚容量（fill rate適用）から、
       在庫の概算使用量を引いた“粗い”推定。列内全スロット同容量という近似。
+    - 取りやすさ: 段・列・奥行きが小さいほど良い => access_key=(min_level, col, min_depth)
     """
     inv = inventory.copy()
     # ロットキー付与（AIが順序理解しやすいよう簡略）
@@ -114,7 +125,13 @@ def build_ai_summary(sku_master: pd.DataFrame, inventory: pd.DataFrame, cfg: Opt
 
     pack_map = _pack_map_from_master(sku_master)
     vol_map = _carton_volume_map(sku_master)
-    cap_per_slot = _capacity_limit(getattr(cfg, "fill_rate", None))  # 1スロットあたりの上限(m3)
+
+    # fill_rate: respect cfg.fill_rate; capacity per slot computed accordingly (server enforces).
+    fr = getattr(cfg, "fill_rate", None)
+    eff_fill = float(fr) if fr is not None else 0.95
+    # Respect user-provided fill_rate; just clamp to a sane range
+    eff_fill = max(0.50, min(eff_fill, 0.99))
+    cap_per_slot = _capacity_limit(eff_fill)  # 1スロットあたりの上限(m3)
 
     # 列代表入数
     rep_pack_by_col = _representative_pack_by_col(inv, pack_map)
@@ -129,9 +146,24 @@ def build_ai_summary(sku_master: pd.DataFrame, inventory: pd.DataFrame, cfg: Opt
         col_slots.setdefault(col, set()).add((lv, dep))
     col_slots_count = {c: len(s) for c, s in col_slots.items()}
 
+    # 各列の取りやすさ（最小段・最小奥行き）
+    col_min_level = inv.groupby("col")["lv"].min().to_dict() if not inv.empty else {}
+    col_min_depth = inv.groupby("col")["dep"].min().to_dict() if not inv.empty else {}
+
     # SKUごとの現状（列→推定ケース数）と入数
     qty_cases = pd.to_numeric(inv.get("cases", inv.get("ケース", 1)), errors="coerce").fillna(1.0)
     inv = inv.assign(_cases=qty_cases)
+
+    # Block detection (optional)
+    blk_series = _detect_block_series(inventory)
+    col_block: Dict[int, Optional[str]] = {}
+    if blk_series is not None and not inv.empty:
+        inv_blk = inv.copy()
+        inv_blk["_blk"] = blk_series.reindex(inv.index)
+        for c, sub in inv_blk.groupby("col"):
+            vals = sub["_blk"].dropna().astype(str)
+            blk = (vals.mode().iat[0] if not vals.empty else None)
+            col_block[int(c)] = (str(blk) if blk is not None else None)
 
     sku_rows: List[Dict[str, Any]] = []
     for sku, g in inv.groupby("商品ID"):
@@ -158,19 +190,26 @@ def build_ai_summary(sku_master: pd.DataFrame, inventory: pd.DataFrame, cfg: Opt
         slots = int(col_slots_count.get(c, max(1, inv.loc[inv["col"] == c, ["lv", "dep"]].drop_duplicates().shape[0])))
         cap_total = float(cap_per_slot) * max(1, slots)
         rep_pack = rep_pack_by_col.get(c)
+        min_lv = int(col_min_level.get(c, 0))
+        min_dep = int(col_min_depth.get(c, 0))
         columns.append({
             "col": int(c),
             "rep_pack": (float(rep_pack) if rep_pack is not None else None),
             "rough_used_m3": used,
             "rough_free_m3": max(0.0, cap_total - used),
             "slots": max(1, slots),
+            "min_level": min_lv,
+            "min_depth": min_dep,
+            "access_key": [min_lv, int(c), min_dep],
+            "block": col_block.get(int(c)),
         })
 
     return {
         "config": {
-            "pack_tolerance_ratio": getattr(cfg, "pack_tolerance_ratio", 0.10),
+            "pack_tolerance_ratio": getattr(cfg, "pack_tolerance_ratio", 0.20),
             "prefer_same_column_bonus": getattr(cfg, "prefer_same_column_bonus", 5.0),
             "same_sku_same_column_bonus": getattr(cfg, "same_sku_same_column_bonus", 20.0),
+            "fill_rate": eff_fill,
         },
         "columns": columns,
         "skus": sku_rows,
@@ -206,14 +245,15 @@ def draft_relocation_with_ai(
         system = (
             "You are a warehouse slotting planner. "
             "Group SKUs by similar case pack (±10%), preserve current column mapping if it already clusters well, "
-            "and output preferred columns per SKU. Do NOT violate FIFO-by-level: older lots must be on lower levels."
+            "and output preferred columns per SKU. Do NOT violate FIFO-by-level: older lots must be on lower levels. "
+            "As a tie-breaker, prefer columns with a smaller ease-of-access key (min_level, column, min_depth)."
         )
         user = (
             "Return JSON only with the shape: "
             '{"preferred_columns": {"<sku_id>":[<col>, ... up to %d]}}. '
             "Rank columns by pack similarity to each column's representative pack and by keeping SKUs in existing columns if reasonable. "
-            "Do not invent new columns.\n\n"
-            "INPUT:\n%s" % (topk, json.dumps(summary, ensure_ascii=False)[:180000])  # 念のため上限
+            "Also sort by ease-of-access (ascending access_key). Do not invent new columns.\n\n"
+            "INPUT:\n%s" % (topk, json.dumps(summary, ensure_ascii=False)[:180000])
         )
 
         # gpt-5 系は response_format 未対応の可能性があるため、フォーマット指示はプロンプトに埋め込む
@@ -502,8 +542,60 @@ def _calc_turnover_scores(ship: pd.DataFrame, rotation_window_days: int) -> Dict
     return {str(k): float(v) for k, v in norm.items()}
 
 
+# --- Inflow velocity scores (receiving) ------------------------------------
+def _calc_inflow_scores(recv: Optional[pd.DataFrame], sku_master: pd.DataFrame, rotation_window_days: int) -> Dict[str, float]:
+    """入荷データからSKUの流入スコア(0..1 正規化)を計算。
+    可能ならケース換算（qty/pack）で集計。packは recv の pack_qty 優先、
+    無ければ sku_master の入数で代替。"""
+    if recv is None or recv.empty:
+        return {}
+    df = recv.copy()
+    if "trandate" not in df.columns:
+        return {}
+    df["trandate"] = pd.to_datetime(df["trandate"], errors="coerce")
+    df = df.dropna(subset=["trandate"])  # 不正日付は除外
+    if df.empty:
+        return {}
+    end = df["trandate"].max()
+    start = end - timedelta(days=int(rotation_window_days or 90))
+    df = df[df["trandate"] >= start]
+    if df.empty:
+        return {}
+
+    # 汎用カラム検出
+    qty_col = next((c for c in ["qty", "quantity", "item_quantity"] if c in df.columns), None)
+    if qty_col is None:
+        return {}
+    sku_col = next((c for c in ["item_internalid", "sku_id", "商品ID"] if c in df.columns), None)
+    if sku_col is None:
+        return {}
+
+    qty = pd.to_numeric(df[qty_col], errors="coerce").fillna(0.0)
+    # pack: recv側 > master側 の順で採用
+    if "pack_qty" in df.columns:
+        pack = pd.to_numeric(df["pack_qty"], errors="coerce")
+    else:
+        pack_map = _pack_map_from_master(sku_master)
+        pack = df[sku_col].astype(str).map(pack_map) if pack_map is not None else None
+    if pack is not None:
+        pack = pd.to_numeric(pack, errors="coerce")
+        cases = qty / pack.replace(0, pd.NA)
+        cases = cases.fillna(0.0)
+    else:
+        # どうしても入数が分からない場合は個数ベースで近似
+        cases = qty.astype(float)
+
+    grp = cases.groupby(df[sku_col].astype(str)).sum()
+    days = max(1, int(rotation_window_days or 90))
+    rate = grp / float(days)
+    if (rate.max() - rate.min()) <= 0:
+        return {k: float(0.0) for k in rate.index.astype(str)}
+    norm = (rate - rate.min()) / (rate.max() - rate.min())
+    return {str(k): float(v) for k, v in norm.items()}
+
+
 def _compute_column_features(inv: pd.DataFrame, sku_master: pd.DataFrame, cfg: OptimizerConfig) -> List[Dict[str, Any]]:
-    """列ごとの代表入数/使用量/スロット/同質性/使用率/アンカー/入口ランク等を算出。"""
+    """列ごとの代表入数/使用量/スロット/同質性/使用率/アンカー/入口ランク/取りやすさを算出。"""
     if inv.empty:
         return []
     inv = inv.copy()
@@ -512,7 +604,12 @@ def _compute_column_features(inv: pd.DataFrame, sku_master: pd.DataFrame, cfg: O
 
     pack_map = _pack_map_from_master(sku_master)
     vol_map = _carton_volume_map(sku_master)
-    cap_per_slot = _capacity_limit(getattr(cfg, "fill_rate", None))
+
+    # fill_rate: respect cfg.fill_rate; clamp to sane range
+    fr = getattr(cfg, "fill_rate", None)
+    eff_fill = float(fr) if fr is not None else 0.95
+    eff_fill = max(0.50, min(eff_fill, 0.99))
+    cap_per_slot = _capacity_limit(eff_fill)
 
     # 列代表入数
     rep_pack_by_col = _representative_pack_by_col(inv, pack_map)
@@ -521,22 +618,35 @@ def _compute_column_features(inv: pd.DataFrame, sku_master: pd.DataFrame, cfg: O
     shelf_use = _shelf_usage(inv, vol_map)  # loc -> used m3
     col_use_approx: Dict[int, float] = {}
     col_slots: Dict[int, set] = {}
-    col_min_depth: Dict[int, int] = {}
     for loc, used in shelf_use.items():
         lv, col, dep = _parse_loc8(loc)
         col_use_approx[col] = col_use_approx.get(col, 0.0) + float(used)
         col_slots.setdefault(col, set()).add((lv, dep))
-        col_min_depth[col] = min(dep, col_min_depth.get(col, dep))
     col_slots_count = {c: len(s) for c, s in col_slots.items()}
 
     # 入数同質性（代表値±tolの帯域内の割合：cases重みは簡易に均等扱い）
-    tol = getattr(cfg, "pack_tolerance_ratio", 0.10)
+    tol = getattr(cfg, "pack_tolerance_ratio", 0.20)
     packs: Dict[str, float] = {}
     if pack_map is not None:
         packs = {str(k): float(v) for k, v in pack_map.items() if pd.notna(v)}
 
     inv_pack = inv.copy()
     inv_pack["pack"] = inv_pack["商品ID"].astype(str).map(packs).fillna(0.0)
+
+    # Optional block detection
+    blk_series = _detect_block_series(inv_pack)
+    col_block: Dict[int, Optional[str]] = {}
+    if blk_series is not None and not inv_pack.empty:
+        inv_pack["_blk"] = blk_series.reindex(inv_pack.index)
+        for c, sub in inv_pack.groupby("col"):
+            vals = sub["_blk"].dropna().astype(str)
+            blk = (vals.mode().iat[0] if not vals.empty else None)
+            col_block[int(c)] = (str(blk) if blk is not None else None)
+
+    # 取りやすさ: 各列の最小段/最小奥行きを採用
+    col_min_level = inv_pack.groupby("col")["lv"].min().to_dict() if not inv_pack.empty else {}
+    col_min_depth = inv_pack.groupby("col")["dep"].min().to_dict() if not inv_pack.empty else {}
+
     columns: List[Dict[str, Any]] = []
     all_cols = sorted({int(c) for c in inv_pack["col"].dropna().astype(int).unique().tolist()})
     for c in all_cols:
@@ -553,6 +663,8 @@ def _compute_column_features(inv: pd.DataFrame, sku_master: pd.DataFrame, cfg: O
             homogeneity = 0.0
         utilization = float(used / cap_total) if cap_total > 0 else 0.0
         is_anchor = (homogeneity >= ANCHOR_HOMOGENEITY_THRESHOLD) and (utilization >= ANCHOR_UTILIZATION_THRESHOLD)
+        min_lv = int(col_min_level.get(c, 0))
+        min_dep = int(col_min_depth.get(c, 0))
         columns.append({
             "col": int(c),
             "rep_pack": (float(rep_pack) if rep_pack is not None else None),
@@ -564,7 +676,10 @@ def _compute_column_features(inv: pd.DataFrame, sku_master: pd.DataFrame, cfg: O
             "is_anchor": bool(is_anchor),
             "stay_put_weight": float(homogeneity * utilization),
             "entrance_rank": int(c),  # 列番号が若いほど入口に近いという前提
-            "min_depth": int(col_min_depth.get(c, 0)),
+            "min_depth": min_dep,
+            "min_level": min_lv,
+            "access_key": [min_lv, int(c), min_dep],
+            "block": col_block.get(int(c)),
         })
     return columns
 
@@ -608,27 +723,56 @@ def build_ai_summary_for_moves(
     sku_master: pd.DataFrame,
     inventory: pd.DataFrame,
     ship: Optional[pd.DataFrame],
+    recv: Optional[pd.DataFrame],
     cfg: OptimizerConfig,
     *,
     rotation_window_days: int = 90,
+    allowed_blocks: Optional[List[str]] = None,
 ) -> dict:
-    """AIメイン用の詳細サマリを生成。列特徴/アンカー/回転/凝集を含む。"""
+    """AIメイン用の詳細サマリを生成。列特徴/アンカー/回転/凝集に加え、入出荷速度を含む。"""
     inv = inventory.copy()
     pack_map = _pack_map_from_master(sku_master)
     turnover = _calc_turnover_scores(ship, rotation_window_days)
+    inflow = _calc_inflow_scores(recv, sku_master, rotation_window_days)
     columns = _compute_column_features(inv, sku_master, cfg)
+    # Attach block info to columns if available
+    blk_series = _detect_block_series(inventory)
+    if blk_series is not None:
+        inv_tmp = inventory.copy()
+        inv_tmp[["lv", "col", "dep"]] = inv_tmp["ロケーション"].apply(lambda s: pd.Series(_parse_loc8(str(s))))
+        col_block: Dict[int, Optional[str]] = {}
+        inv_tmp["_blk"] = blk_series.reindex(inv_tmp.index)
+        for c, sub in inv_tmp.groupby("col"):
+            vals = sub["_blk"].dropna().astype(str)
+            blk = (vals.mode().iat[0] if not vals.empty else None)
+            col_block[int(c)] = (str(blk) if blk is not None else None)
+        for col in columns:
+            b = col_block.get(int(col["col"])) if isinstance(col, dict) and "col" in col else None
+            col["block"] = b
     skus = _sku_cohesion_stats(inv, pack_map)
 
     # SKUの体積（1ケース）も同梱
     vol_map = _carton_volume_map(sku_master)
     vol_case = {str(k): float(v) for k, v in vol_map.items()}
 
-    # turnover を紐付け
+    # velocity_score: 出荷と入荷の平均（0..1）。どちらか欠損ならある方を採用。
     for row in skus:
-        row["turnover_score"] = float(turnover.get(row["sku_id"], 0.0))
+        t = float(turnover.get(row["sku_id"], 0.0))
+        r = float(inflow.get(row["sku_id"], 0.0))
+        if t > 0 and r > 0:
+            v = (t + r) / 2.0
+        else:
+            v = max(t, r)
+        row["turnover_score"] = t
+        row["inflow_score"] = r
+        row["velocity_score"] = v
         row["volume_case_m3"] = float(vol_case.get(row["sku_id"], 0.0))
 
-    cap_per_slot = _capacity_limit(getattr(cfg, "fill_rate", None))
+    # fill_rate: respect cfg.fill_rate; clamp to sane range
+    fr = getattr(cfg, "fill_rate", None)
+    eff_fill = float(fr) if fr is not None else 0.95
+    eff_fill = max(0.50, min(eff_fill, 0.99))
+    cap_per_slot = _capacity_limit(eff_fill)
 
     # --- lots_full per SKU (original lot strings and from_locs) -------------
     inv2 = inventory.copy()
@@ -671,24 +815,177 @@ def build_ai_summary_for_moves(
     return {
         "constraints": {
             "slot_capacity_m3": float(cap_per_slot),
-            "fill_rate": float(getattr(cfg, "fill_rate", 0.90) or 0.90),
-            "pack_tolerance_ratio": float(getattr(cfg, "pack_tolerance_ratio", 0.10) or 0.10),
+            "fill_rate": float(eff_fill),
+            "pack_tolerance_ratio": float(getattr(cfg, "pack_tolerance_ratio", 0.20) or 0.20),
             "anchor_homogeneity_threshold": float(ANCHOR_HOMOGENEITY_THRESHOLD),
             "anchor_utilization_threshold": float(ANCHOR_UTILIZATION_THRESHOLD),
+            "ease_of_access": "lower (min_level, col, min_depth) is better",
+            "allowed_blocks": list(allowed_blocks or []),
         },
         "columns": columns,
         "skus": skus,
         "server_notes": {
             "to_col_ok": True,
             "slot_capacity_enforced_server_side": True,
-            "notes": "When only to_col is provided, the backend will choose a concrete to_loc that respects per-slot capacity and fill_rate. Prefer columns with rough_free_m3 > 0 and matching rep_pack."
+            "notes": "When only to_col is provided, the backend will choose a concrete to_loc that respects per-slot capacity and fill_rate.",
         },
         "placeholders": {
             "exact": placeholders_exact,
-            "deny_prefix": ["000000", "222222"]
+            "deny_prefix": ["000000", "222222"],
         },
     }
 
+
+import math
+
+def _heuristic_fill_to_max(
+    *,
+    sku_master: pd.DataFrame,
+    inventory: pd.DataFrame,
+    ship: Optional[pd.DataFrame],
+    recv: Optional[pd.DataFrame],
+    cfg: OptimizerConfig,
+    block_codes: Optional[List[str]] = None,
+    rotation_window_days: int = 90,
+    limit: int = 50,
+) -> List[Dict[str, Any]]:
+    """Heuristic fallback that proposes up to `limit` moves by scoring ease-of-access improvement,
+    velocity, and pack similarity. Returns objects with (sku_id, lot, qty_cases, from_loc, to_col)."""
+    try:
+        inv = inventory.copy()
+        if inv is None or inv.empty or limit <= 0:
+            return []
+
+        # Parse location (lv, col, dep) and lot key; ensure numeric cases
+        inv["lot_key"] = inv["ロット"].map(_parse_lot_date_key)
+        inv[["lv", "col", "dep"]] = inv["ロケーション"].apply(lambda s: pd.Series(_parse_loc8(str(s))))
+        inv["cases"] = pd.to_numeric(inv.get("cases", inv.get("ケース", 0)), errors="coerce").fillna(0.0)
+        inv = inv[inv["cases"] > 0]
+        if inv.empty:
+            return []
+
+        # Allowed target blocks (if specified)
+        allowed_blocks = set(block_codes or [])
+        blk_series = _detect_block_series(inventory)
+        block_by_col: Dict[int, Optional[str]] = {}
+        if blk_series is not None:
+            inv_blk = inv.copy()
+            inv_blk["_blk"] = blk_series.reindex(inv_blk.index)
+            for c, sub in inv_blk.groupby("col"):
+                vals = sub["_blk"].dropna().astype(str)
+                block_by_col[int(c)] = (vals.mode().iat[0] if not vals.empty else None)
+
+        # Access normalization
+        maxL = max(1, int(inv["lv"].max()))
+        maxC = max(1, int(inv["col"].max()))
+        maxD = max(1, int(inv["dep"].max()))
+        def _access_score(tup: tuple[int,int,int]) -> float:
+            lv, c, d = tup
+            return ((maxL - float(lv))/maxL + (maxC - float(c))/maxC + (maxD - float(d))/maxD) / 3.0
+
+        # Columns universe
+        cols_sorted = sorted(inv["col"].dropna().astype(int).unique().tolist())
+
+        # Pack similarity helpers
+        pack_map = _pack_map_from_master(sku_master)
+        rep_pack_by_col = _representative_pack_by_col(inv, pack_map)
+        tol = float(getattr(cfg, "pack_tolerance_ratio", 0.20) or 0.20)
+
+        # Velocity score (combine ship turn + recv inflow, both normalized 0..1)
+        turnover = _calc_turnover_scores(ship, rotation_window_days)
+        inflow = _calc_inflow_scores(recv, sku_master, rotation_window_days)
+        def _vel_score(s: str) -> float:
+            t = float(turnover.get(str(s), 0.0))
+            r = float(inflow.get(str(s), 0.0))
+            return (t + r) / 2.0 if (t > 0 and r > 0) else max(t, r)
+
+        # Weights / penalties
+        W = getattr(cfg, "ai_weights", None) or {"access": 1.0, "velocity": 0.8, "pack_similarity": 0.6}
+        P = getattr(cfg, "ai_penalties", None) or {"distance": 0.3, "retouch": 0.2}
+        min_qty = max(1, int(getattr(cfg, "ai_min_qty_cases", 1) or 1))
+
+        def _dist(a: tuple[int,int,int], b: tuple[int,int,int]) -> float:
+            return abs(float(a[0]) - float(b[0])) + abs(float(a[1]) - float(b[1])) + abs(float(a[2]) - float(b[2]))
+
+        # Build one best candidate per source (sku, lot, from_loc)
+        candidates: List[Dict[str, Any]] = []
+        for _, r in inv.iterrows():
+            sku = str(r["商品ID"])
+            lot = str(r["ロット"])
+            from_loc = str(r["ロケーション"])
+            if pd.isna(r["lot_key"]):
+                continue
+            lv, col, dep = int(r["lv"]), int(r["col"]), int(r["dep"])
+            avail = int(max(0, math.floor(float(r["cases"]))))
+            if avail <= 0:
+                continue
+            base_acc = _access_score((lv, col, dep))
+
+            best: Dict[str, Any] | None = None
+            for c in cols_sorted:
+                # Block allowlist (if provided)
+                if allowed_blocks:
+                    blk = block_by_col.get(int(c))
+                    if blk is None or str(blk) not in allowed_blocks:
+                        continue
+
+                to_tup = (1, int(c), 1)  # assume front & lowest for access evaluation
+                acc = _access_score(to_tup)
+                if acc <= base_acc:
+                    continue  # no access improvement
+
+                # Pack similarity
+                ps = 0.0
+                try:
+                    p = float(pack_map.get(sku)) if (pack_map is not None and not pd.isna(pack_map.get(sku))) else None
+                    rep = rep_pack_by_col.get(int(c))
+                    if p and rep:
+                        if p == float(rep):
+                            ps = 1.0
+                        elif abs(p - float(rep)) / max(p, float(rep)) <= tol:
+                            ps = 0.5
+                except Exception:
+                    ps = 0.0
+
+                v = _vel_score(sku)
+                d = _dist((lv, col, dep), to_tup)
+                score = W.get("access", 1.0) * acc + W.get("velocity", 0.8) * v + W.get("pack_similarity", 0.6) * ps - P.get("distance", 0.3) * d
+                if score <= 0:
+                    continue
+
+                cand = {
+                    "sku_id": sku,
+                    "lot": lot,
+                    "qty_cases": int(min(avail, min_qty)),
+                    "from_loc": from_loc,
+                    "to_col": int(c),
+                    "score": float(score),
+                }
+                if best is None or cand["score"] > best["score"]:
+                    best = cand
+
+            if best:
+                candidates.append(best)
+
+        if not candidates:
+            return []
+
+        # Sort by score, dedupe by (sku, lot, from_loc), trim to limit
+        candidates.sort(key=lambda x: x["score"], reverse=True)
+        out: List[Dict[str, Any]] = []
+        seen = set()
+        for c in candidates:
+            k = (c["sku_id"], c["lot"], c["from_loc"])
+            if k in seen:
+                continue
+            seen.add(k)
+            c.pop("score", None)
+            out.append(c)
+            if len(out) >= int(limit):
+                break
+        return out
+    except Exception:
+        return []
 
 def draft_moves_with_ai(
     sku_master: pd.DataFrame,
@@ -710,14 +1007,27 @@ def draft_moves_with_ai(
     try:
         api_key = os.getenv("OPENAI_API_KEY", "")
         if not api_key:
-            print("[ai_planner] OPENAI_API_KEY missing; returning empty plan (fallback to Greedy).")
+            print("[ai_planner] OPENAI_API_KEY missing; using heuristic fill_to_max fallback.")
+            if getattr(cfg, "ai_mode", "fill_to_max") == "fill_to_max":
+                return _heuristic_fill_to_max(
+                    sku_master=sku_master,
+                    inventory=inventory,
+                    ship=ship,
+                    recv=recv,
+                    cfg=cfg,
+                    block_codes=list(block_codes or []),
+                    rotation_window_days=int(rotation_window_days or 90),
+                    limit=int(max_moves or 0),
+                )
             return []
         summary = build_ai_summary_for_moves(
             sku_master=sku_master,
             inventory=inventory,
             ship=ship,
+            recv=recv,
             cfg=cfg,
             rotation_window_days=int(rotation_window_days or 90),
+            allowed_blocks=list(block_codes or []),
         )
         mdl = (model or os.getenv("OPENAI_MODEL") or "gpt-4o-mini").strip()
         temp = float(temperature)
@@ -732,10 +1042,14 @@ def draft_moves_with_ai(
         )
 
         system = (
-            "You are a warehouse slotting planner. Primary goals: (1) co-locate the same SKU within a single column and enforce FIFO by levels (older lots on lower levels), (2) preserve anchor columns (high pack homogeneity and utilization), (3) minimize work cost (touched locations / evictions / moved cases).\n"
-            "Secondary: within those constraints, place higher-turnover SKUs closer to the entrance (smaller column numbers and smaller depth values).\n"
-            "Hard constraints: Do not exceed max_moves. Output to_col ONLY (no to_loc). Use only real lots and from_locs listed in summary.skus[].lots_full, and avoid placeholder locations (summary.placeholders). Prefer columns with rough_free_m3 > 0 and representative pack within ±pack_tolerance_ratio.\n"
-            "Do not move SKUs with unknown lot dates. Do not invent columns or locations. Always return at least a few moves when consolidation or FIFO fixes are possible."
+            "You are a warehouse slotting planner. Priorities (in order): "
+            "(1) For the same SKU, ensure older lots sit on lower levels and in easier positions (smaller min_level/column/depth) and consolidate columns when reasonable; "
+            "(2) Group SKUs by same/near case pack (±pack_tolerance_ratio) to keep columns homogeneous; "
+            "(3) Place high-velocity SKUs (combine shipping turnover_score and receiving inflow_score as velocity_score) in easier positions (smaller access_key). "
+            "Preserve anchor columns (high homogeneity & utilization) when possible and minimize work cost (touches/evictions/moved cases). "
+            "Hard constraints: Do not exceed max_moves. Output to_col ONLY (no to_loc). Use only real lots and from_locs listed in summary.skus[].lots_full, and avoid placeholder locations. "
+            "ONLY propose destination columns whose 'block' is in summary.constraints.allowed_blocks when that list is non-empty. "
+            "Keep destination usage under the effective fill rate provided in summary.constraints.fill_rate (do not assume 0.95). Prefer columns with rough_free_m3 > 0 and with rep_pack within ±pack_tolerance_ratio."
         )
 
         user_payload = {
@@ -798,6 +1112,17 @@ def draft_moves_with_ai(
 
         if not text or not str(text).strip():
             print("[ai_planner] moves: empty completion text")
+            if getattr(cfg, "ai_mode", "fill_to_max") == "fill_to_max":
+                return _heuristic_fill_to_max(
+                    sku_master=sku_master,
+                    inventory=inventory,
+                    ship=ship,
+                    recv=recv,
+                    cfg=cfg,
+                    block_codes=list(block_codes or []),
+                    rotation_window_days=int(rotation_window_days or 90),
+                    limit=int(max_moves or 0),
+                )
             return []
         data, cleaned, err = _parse_json_relaxed(text)
         if data is None:
@@ -810,6 +1135,17 @@ def draft_moves_with_ai(
                 "resp_head": head,
             })
             print(f"[ai_planner] moves: JSON parse fail: {err}; head={head}")
+            if getattr(cfg, "ai_mode", "fill_to_max") == "fill_to_max":
+                return _heuristic_fill_to_max(
+                    sku_master=sku_master,
+                    inventory=inventory,
+                    ship=ship,
+                    recv=recv,
+                    cfg=cfg,
+                    block_codes=list(block_codes or []),
+                    rotation_window_days=int(rotation_window_days or 90),
+                    limit=int(max_moves or 0),
+                )
             return []
         else:
             moves_len = 0
@@ -824,6 +1160,7 @@ def draft_moves_with_ai(
         moves = data.get("moves") if isinstance(data, dict) else None
         if isinstance(moves, list) and len(moves) > 0:
             normalized: List[Dict[str, Any]] = []
+            seen_keys = set()
             for m in moves:
                 if not isinstance(m, dict):
                     continue
@@ -837,20 +1174,80 @@ def draft_moves_with_ai(
                 # prefer to_col only
                 if "to_col" in mm and "to_loc" in mm:
                     mm.pop("to_loc", None)
+                k = (mm.get("sku_id"), mm.get("lot"), mm.get("from_loc"))
+                if k in seen_keys:
+                    continue
+                seen_keys.add(k)
                 normalized.append(mm)
+
+            # AI-Max: fill up to max_moves with heuristic fallback if needed
+            if getattr(cfg, "ai_mode", "fill_to_max") == "fill_to_max":
+                need = int(max_moves) - len(normalized)
+                if need > 0:
+                    filler = _heuristic_fill_to_max(
+                        sku_master=sku_master,
+                        inventory=inventory,
+                        ship=ship,
+                        recv=recv,
+                        cfg=cfg,
+                        block_codes=list(block_codes or []),
+                        rotation_window_days=int(rotation_window_days or 90),
+                        limit=int(need),
+                    )
+                    for mm in filler:
+                        k = (mm.get("sku_id"), mm.get("lot"), mm.get("from_loc"))
+                        if k in seen_keys:
+                            continue
+                        normalized.append(mm)
+                        seen_keys.add(k)
+                        if len(normalized) >= int(max_moves):
+                            break
             return normalized
         if isinstance(moves, list) and len(moves) == 0:
             print("[ai_planner] moves: 'moves' present but empty (model returned zero).")
+            if getattr(cfg, "ai_mode", "fill_to_max") == "fill_to_max":
+                return _heuristic_fill_to_max(
+                    sku_master=sku_master,
+                    inventory=inventory,
+                    ship=ship,
+                    recv=recv,
+                    cfg=cfg,
+                    block_codes=list(block_codes or []),
+                    rotation_window_days=int(rotation_window_days or 90),
+                    limit=int(max_moves or 0),
+                )
             return []
         if isinstance(data, list) and len(data) > 0:
             return data
         if isinstance(data, list) and len(data) == 0:
             print("[ai_planner] moves: top-level array but empty")
+            if getattr(cfg, "ai_mode", "fill_to_max") == "fill_to_max":
+                return _heuristic_fill_to_max(
+                    sku_master=sku_master,
+                    inventory=inventory,
+                    ship=ship,
+                    recv=recv,
+                    cfg=cfg,
+                    block_codes=list(block_codes or []),
+                    rotation_window_days=int(rotation_window_days or 90),
+                    limit=int(max_moves or 0),
+                )
             return []
         if isinstance(data, dict):
             print(f"[ai_planner] moves: no 'moves' key; keys={list(data.keys())}")
         else:
             print(f"[ai_planner] moves: unexpected top-level type: {type(data).__name__}")
+        if getattr(cfg, "ai_mode", "fill_to_max") == "fill_to_max":
+            return _heuristic_fill_to_max(
+                sku_master=sku_master,
+                inventory=inventory,
+                ship=ship,
+                recv=recv,
+                cfg=cfg,
+                block_codes=list(block_codes or []),
+                rotation_window_days=int(rotation_window_days or 90),
+                limit=int(max_moves or 0),
+            )
         return []
     except Exception as e:
         print(f"[ai_planner] moves: unexpected error: {e}")
@@ -859,6 +1256,17 @@ def draft_moves_with_ai(
             "phase": "moves",
             "error": str(e)[:400],
         })
+        if getattr(cfg, "ai_mode", "fill_to_max") == "fill_to_max":
+            return _heuristic_fill_to_max(
+                sku_master=sku_master,
+                inventory=inventory,
+                ship=ship,
+                recv=recv,
+                cfg=cfg,
+                block_codes=list(block_codes or []),
+                rotation_window_days=int(rotation_window_days or 90),
+                limit=int(max_moves or 0),
+            )
         return []
 
 

@@ -362,18 +362,19 @@ const OptimizePage: NextPage & { pageTitle?: string } = () => {
     setReloStatus('最適化を実行中...');
     setMoves([]);
     setSummaryReport(null); // 総合評価レポートをリセット
+    
+    // --- Prepare a client trace id (defined outside try for catch access) ---
+    const traceId = (() => {
+      try {
+        const arr = new Uint8Array(6);
+        crypto.getRandomValues(arr);
+        return Array.from(arr).map((b) => b.toString(16).padStart(2, '0')).join('');
+      } catch {
+        return Math.random().toString(16).slice(2, 14);
+      }
+    })();
+    
     try {
-      // --- Prepare a client trace id and open SSE before firing the POST ---
-      const traceId = (() => {
-        try {
-          const arr = new Uint8Array(6);
-          crypto.getRandomValues(arr);
-          return Array.from(arr).map((b) => b.toString(16).padStart(2, '0')).join('');
-        } catch {
-          return Math.random().toString(16).slice(2, 14);
-        }
-      })();
-
       // Open SSE stream (via Next.js rewrite in dev)
       try {
         if (esRef.current) { esRef.current.close(); esRef.current = null; }
@@ -529,10 +530,47 @@ const OptimizePage: NextPage & { pageTitle?: string } = () => {
       }
     } catch (e: any) {
       console.error('Relocation error:', e); // デバッグログ
+      // タイムアウトエラーでも、SSE/ポーリングで進捗が確認できていれば失敗扱いしない
+      const errMsg = String(e?.message || e);
+      const isTimeout = errMsg.toLowerCase().includes('timeout') ||
+                        errMsg.includes('upstream') ||
+                        errMsg === '{}';
+      if (isTimeout && ((livePlanned ?? 0) > 0 || (liveAccepted ?? 0) > 0)) {
+        console.log('[Relocation] Timeout but progress detected, continuing to poll...');
+        setReloStatus(`⏳ 処理中... (planned=${livePlanned ?? 0}, accepted=${liveAccepted ?? 0}) - バックグラウンドで実行中`);
+        // ポーリングで結果を待つ
+        const pollForResult = async () => {
+          for (let i = 0; i < 60; i++) { // 最大5分待機
+            await new Promise(r => setTimeout(r, 5000));
+            try {
+              const { json: debugJson } = await getWithFallback(`/v1/upload/relocation/debug?trace_id=${encodeURIComponent(traceId)}`);
+              if (debugJson?.moves && Array.isArray(debugJson.moves) && debugJson.moves.length > 0) {
+                const mvWithDist: Move[] = debugJson.moves.map((m: any) => ({
+                  ...m,
+                  distance: m.distance ?? distanceOf(m.from_loc, m.to_loc),
+                  lot_date: m.lot_date ?? deriveLotDate(m.lot),
+                }));
+                setMoves(mvWithDist);
+                setReloStatus(`✔ 最適化完了（${mvWithDist.length}件）`);
+                if (debugJson.summary_report) setSummaryReport(debugJson.summary_report);
+                return;
+              }
+              if (typeof debugJson?.accepted === 'number') setLiveAccepted(debugJson.accepted);
+              if (typeof debugJson?.planned === 'number') setLivePlanned(debugJson.planned);
+              setReloStatus(`⏳ 処理中... (planned=${debugJson?.planned ?? '-'}, accepted=${debugJson?.accepted ?? '-'})`);
+            } catch { /* continue polling */ }
+          }
+          setReloStatus(`⚠ タイムアウト: debugエンドポイントで結果を確認してください`);
+        };
+        pollForResult().finally(() => {
+          setRelocating(false);
+          try { if (esRef.current) { esRef.current.close(); esRef.current = null; } } catch {}
+          setUsingSSE(false);
+        });
+        return; // early return to skip finally cleanup
+      }
       setReloStatus(`✖ 最適化に失敗: ${e?.message ?? String(e)}`);
-    } finally {
       setRelocating(false);
-      // Close SSE if still open
       try { if (esRef.current) { esRef.current.close(); esRef.current = null; } } catch {}
       setUsingSSE(false);
     }
@@ -540,7 +578,7 @@ const OptimizePage: NextPage & { pageTitle?: string } = () => {
     blocks, maxMoves, fillRate, qualities, useAiMain, windowDays,
     chainDepth, evictionBudget, touchBudget,
     packLowMax, packHighMin, bandPrefWeight, nearCols, farCols, promoKeywords,
-    liveAccepted,
+    liveAccepted, livePlanned,
   ]);
 
   // Poll relocation/debug while running to show real-time counts

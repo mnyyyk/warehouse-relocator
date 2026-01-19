@@ -1,0 +1,31 @@
+# Python bytecode & metadata
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.egg-info/
+
+# Virtual environments
+.venv/
+venv/
+venv_new/
+
+# OS / VCS
+.DS_Store
+.git/
+.gitignore
+
+# Tests & caches (exclude from runtime image)
+tests/
+.mypy_cache/
+.pytest_cache/
+.coverage
+
+# Logs & temp
+logs/
+*.log
+/tmp/
+
+# Node (in case of monorepo)
+node_modules/

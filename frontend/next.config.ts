@@ -9,18 +9,6 @@ const backendOriginRaw = process.env.NEXT_PUBLIC_API_BASE || "http://127.0.0.1:8
 const backendOrigin = backendOriginRaw.replace(/\/$/, "");
 
 const nextConfig: NextConfig = {
-  eslint: {
-    // Warning: This allows production builds to successfully complete even if
-    // your project has ESLint errors.
-    ignoreDuringBuilds: true,
-  },
-  typescript: {
-    // !! WARN !!
-    // Dangerously allow production builds to successfully complete even if
-    // your project has type errors.
-    // !! WARN !!
-    ignoreBuildErrors: true,
-  },
   async rewrites() {
     if (!isDev) return [];
     return [

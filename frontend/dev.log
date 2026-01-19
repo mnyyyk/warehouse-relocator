@@ -1,0 +1,28 @@
+
+> frontend@0.1.0 dev
+> next dev --turbopack
+
+   ▲ Next.js 15.4.5 (Turbopack)
+   - Local:        http://localhost:3000
+   - Network:      http://192.168.0.184:3000
+   - Environments: .env.local
+
+ ✓ Starting...
+ ✓ Ready in 720ms
+ ○ Compiling / ...
+ ✓ Compiled / in 914ms
+ GET / 200 in 988ms
+ GET / 200 in 30ms
+ ⚠ Cross origin request detected from 127.0.0.1 to /_next/* resource. In a future major version of Next.js, you will need to explicitly configure "allowedDevOrigins" in next.config to allow this.
+Read more: https://nextjs.org/docs/app/api-reference/config/next-config-js/allowedDevOrigins
+ ○ Compiling /favicon.ico ...
+ ✓ Compiled /favicon.ico in 534ms
+ GET /favicon.ico 200 in 856ms
+ ✓ Compiled /upload in 81ms
+ ✓ Compiled /analyze in 179ms
+ ✓ Compiled /optimize in 74ms
+ GET /optimize 200 in 51ms
+ GET /favicon.ico 200 in 214ms
+ ✓ Compiled /debug in 122ms
+ GET /analyze 200 in 80ms
+ GET /favicon.ico 200 in 237ms
