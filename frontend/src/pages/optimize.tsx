@@ -202,29 +202,45 @@ const OptimizePage: NextPage & { pageTitle?: string } = () => {
   const [didAutoSelectQuality, setDidAutoSelectQuality] = useState<boolean>(false);
 
   const loadQualityChoices = useCallback(async () => {
-    const limit = 5000;
-    let offset = 0;
-    const setVals = new Set<string>();
     try {
-      while (true) {
-        const { json } = await getWithFallback(`/v1/debug/inventory?limit=${limit}&offset=${offset}`);
-        const rows = Array.isArray(json?.rows) ? json.rows : [];
-        rows.forEach((r: any) => {
-          const v = (r.quality_name ?? r['品質区分名'] ?? '').toString().trim();
-          if (v) setVals.add(v);
-        });
-        const total = typeof json?.total === 'number' ? json.total : 0;
-        offset += rows.length;
-        if (!rows.length || offset >= total || offset >= 10000) break; // safety cap
-      }
-      const choices = Array.from(setVals).sort();
+      // 専用エンドポイントを使用（高速）
+      const { json } = await getWithFallback(`/v1/debug/quality_names`);
+      const choices = Array.isArray(json?.quality_names) ? json.quality_names : [];
+      console.log('[loadQualityChoices] Found choices:', choices);
       setQualityChoices(choices);
       if (!didAutoSelectQuality && selectedQualities.length === 0 && choices.includes('良品')) {
         setSelectedQualities(['良品']);
         setDidAutoSelectQuality(true);
       }
-    } catch {
-      setQualityChoices([]);
+    } catch (e) {
+      console.error('[loadQualityChoices] Error:', e);
+      // フォールバック: 在庫データからページング取得
+      const limit = 5000;
+      let offset = 0;
+      const setVals = new Set<string>();
+      try {
+        while (true) {
+          const { json } = await getWithFallback(`/v1/debug/inventory?limit=${limit}&offset=${offset}`);
+          const rows = Array.isArray(json?.rows) ? json.rows : [];
+          rows.forEach((r: any) => {
+            const v = (r.quality_name ?? r['品質区分名'] ?? '').toString().trim();
+            if (v) setVals.add(v);
+          });
+          const total = typeof json?.total === 'number' ? json.total : 0;
+          offset += rows.length;
+          if (!rows.length || offset >= total || offset >= 10000) break; // safety cap
+        }
+        const choices = Array.from(setVals).sort();
+        console.log('[loadQualityChoices] Fallback found choices:', choices);
+        setQualityChoices(choices);
+        if (!didAutoSelectQuality && selectedQualities.length === 0 && choices.includes('良品')) {
+          setSelectedQualities(['良品']);
+          setDidAutoSelectQuality(true);
+        }
+      } catch (e2) {
+        console.error('[loadQualityChoices] Fallback error:', e2);
+        setQualityChoices([]);
+      }
     }
   }, [didAutoSelectQuality, selectedQualities.length]);
 
@@ -375,11 +391,12 @@ const OptimizePage: NextPage & { pageTitle?: string } = () => {
     })();
     
     try {
-      // Open SSE stream (via Next.js rewrite in dev)
+      // Open SSE stream (direct to API in production, via proxy in dev)
       try {
         if (esRef.current) { esRef.current.close(); esRef.current = null; }
-        const es = new EventSource(`/v1/upload/relocation/stream?trace_id=${encodeURIComponent(traceId)}`);
-        console.log('[SSE] Opening connection with trace_id:', traceId);
+        const sseUrl = `${API_BASE}/v1/upload/relocation/stream?trace_id=${encodeURIComponent(traceId)}`;
+        console.log('[SSE] Opening connection to:', sseUrl);
+        const es = new EventSource(sseUrl);
         esRef.current = es;
         setUsingSSE(true);
         
@@ -469,6 +486,13 @@ const OptimizePage: NextPage & { pageTitle?: string } = () => {
       // 実際にAPIを呼び出す（相対→rewrites / 直叩き 両対応）
   const { json, via } = await postWithFallback('/v1/upload/relocation/start', payload);
       console.log('API response:', json); // デバッグログ
+
+      // rejection_summaryからplanned/acceptedを取得
+      if (json?.rejection_summary) {
+        const rs = json.rejection_summary;
+        if (typeof rs.planned === 'number') setLivePlanned(rs.planned);
+        if (typeof rs.accepted === 'number') setLiveAccepted(rs.accepted);
+      }
 
       // メタ情報（あれば）
       const meta = json && typeof json === 'object' && !Array.isArray(json)
@@ -643,9 +667,9 @@ const OptimizePage: NextPage & { pageTitle?: string } = () => {
   ]);
 
   // Poll relocation/debug while running to show real-time counts
+  // Note: Poll even when SSE is active as a fallback (SSE may not deliver events reliably in production)
   useEffect(() => {
     if (!relocating) return;
-    if (usingSSE) return; // SSE中はポーリング抑止
     let stop = false;
     let timer: any = null;
     const tick = async () => {
@@ -654,9 +678,10 @@ const OptimizePage: NextPage & { pageTitle?: string } = () => {
         if (stop) return;
         const p = typeof json?.planned === 'number' ? json.planned : null;
         const a = typeof json?.accepted === 'number' ? json.accepted : null;
-        if (p !== null) setLivePlanned(p);
-        if (a !== null) setLiveAccepted(a);
-        if (p !== null || a !== null) {
+        // Only update if values are non-zero (avoid overwriting good values with empty cache)
+        if (p !== null && p > 0) setLivePlanned(p);
+        if (a !== null && a > 0) setLiveAccepted(a);
+        if ((p !== null && p > 0) || (a !== null && a > 0)) {
           setReloStatus(`最適化を実行中... (planned=${p ?? '-'}, accepted=${a ?? '-'})`);
         }
       } catch {
@@ -667,7 +692,7 @@ const OptimizePage: NextPage & { pageTitle?: string } = () => {
     };
     tick();
     return () => { stop = true; if (timer) clearTimeout(timer); };
-  }, [relocating, usingSSE]);
+  }, [relocating]);
 
   const exportCsv = useCallback(() => {
     if (!moves.length) return;
