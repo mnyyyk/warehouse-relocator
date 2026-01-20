@@ -535,6 +535,15 @@ const OptimizePage: NextPage & { pageTitle?: string } = () => {
         lot_date: m.lot_date ?? deriveLotDate(m.lot),
       }));
       setMoves(mvWithDist);
+      
+      // Update planned/accepted from moves count if rejection_summary is missing or has 0
+      // This ensures we show the actual number of moves returned
+      const movesCount = mvWithDist.length;
+      if (movesCount > 0) {
+        if (livePlanned === null || livePlanned === 0) setLivePlanned(movesCount);
+        if (liveAccepted === null || liveAccepted === 0) setLiveAccepted(movesCount);
+      }
+      
       setReloStatus(`✔ 最適化完了（${mvWithDist.length}件, ${via}）`);
       
       // 最適化完了後、debugエンドポイントからsummary_reportを取得
