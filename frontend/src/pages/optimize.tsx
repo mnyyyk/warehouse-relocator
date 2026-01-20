@@ -542,11 +542,13 @@ const OptimizePage: NextPage & { pageTitle?: string } = () => {
                       quality_names: statusJson.quality_names,
                     });
                     setReloStatus(`✔ 最適化完了（${mvWithDist.length}件, async via ${via}）`);
+                    setRelocating(false); // 明示的にrelocatingを解除
                     return;
                   } else if (statusJson?.status === 'failed') {
                     // 失敗
                     console.error('[Relocation] Async task failed:', statusJson.error);
                     setReloStatus(`✖ 最適化失敗: ${statusJson.error || 'Unknown error'}`);
+                    setRelocating(false); // 明示的にrelocatingを解除
                     return;
                   } else if (statusJson?.status === 'running') {
                     // 実行中 - 進捗表示
@@ -582,6 +584,7 @@ const OptimizePage: NextPage & { pageTitle?: string } = () => {
                           setMoves(mv);
                           setSummary(debugJson.summary ?? null);
                           setReloStatus(`✔ 最適化完了（${mv.length}件, debug fallback）`);
+                          setRelocating(false); // 明示的にrelocatingを解除
                           return; // 完了
                         }
                       } catch (debugErr) {
@@ -595,6 +598,7 @@ const OptimizePage: NextPage & { pageTitle?: string } = () => {
               }
               // タイムアウト
               setReloStatus(`⚠ タイムアウト - サマリーレポートで結果を確認してください`);
+              setRelocating(false); // タイムアウト時も明示的にrelocatingを解除
             };
             
             try {

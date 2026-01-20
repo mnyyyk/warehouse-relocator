@@ -18,3 +18,11 @@ docker/**/cache/
 sample_data/
 *.xlsx
 .vercel
+
+# Terraform provider binaries
+**/.terraform/
+*.tfstate
+*.tfstate.backup
+.terraform.lock.hcl
+.terraform.tfstate.lock.info
+
