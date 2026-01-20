@@ -348,6 +348,14 @@ const OptimizePage: NextPage & { pageTitle?: string } = () => {
   const [reloStatus, setReloStatus] = useState<string>('');
   const [relocating, setRelocating] = useState<boolean>(false);
   const [usingSSE, setUsingSSE] = useState<boolean>(false);
+
+  // Safety net: if moves exist and status shows completion, force relocating to false
+  useEffect(() => {
+    if (relocating && moves.length > 0 && (reloStatus.startsWith('✔') || reloStatus.startsWith('⚠'))) {
+      console.log('[Safety] Forcing relocating=false because moves exist and status is complete');
+      setRelocating(false);
+    }
+  }, [relocating, moves.length, reloStatus]);
   const esRef = useRef<EventSource | null>(null);
 
   // Live relocation debug polling (planned/accepted)
