@@ -668,13 +668,21 @@ const OptimizePage: NextPage & { pageTitle?: string } = () => {
 
   // Poll relocation/debug while running to show real-time counts
   // Note: Poll even when SSE is active as a fallback (SSE may not deliver events reliably in production)
+  // Use trace_id from reloMeta to get the correct optimization result
+  const currentTraceId = reloMeta?.trace_id;
   useEffect(() => {
     if (!relocating) return;
+    // Don't poll if we already have valid results from API response
+    if (livePlanned !== null && livePlanned > 0) return;
     let stop = false;
     let timer: any = null;
     const tick = async () => {
       try {
-        const { json } = await getWithFallback('/v1/upload/relocation/debug');
+        // Use trace_id to get specific optimization result, not stale cache
+        const path = currentTraceId 
+          ? `/v1/upload/relocation/debug?trace_id=${encodeURIComponent(currentTraceId)}`
+          : '/v1/upload/relocation/debug';
+        const { json } = await getWithFallback(path);
         if (stop) return;
         const p = typeof json?.planned === 'number' ? json.planned : null;
         const a = typeof json?.accepted === 'number' ? json.accepted : null;
@@ -692,7 +700,7 @@ const OptimizePage: NextPage & { pageTitle?: string } = () => {
     };
     tick();
     return () => { stop = true; if (timer) clearTimeout(timer); };
-  }, [relocating]);
+  }, [relocating, currentTraceId, livePlanned]);
 
   const exportCsv = useCallback(() => {
     if (!moves.length) return;
