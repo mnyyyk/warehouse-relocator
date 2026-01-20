@@ -1819,9 +1819,9 @@ AIを使用することで、より効率的で実用的な配置提案が得ら
           </button>
           <button
             onClick={exportCsv}
-            disabled={!moves.length || relocating}
+            disabled={!moves.length}
             className={`px-4 py-2 rounded-lg text-sm font-medium transition border ${
-              !moves.length || relocating
+              !moves.length
                 ? 'bg-gray-100 text-gray-400 border-black/10 cursor-not-allowed'
                 : 'bg-white text-gray-900 border-black/10 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-black/20'
             }`}
@@ -1833,9 +1833,9 @@ Excelで開いて詳細分析や作業計画の作成に活用できます。"
           </button>
           <button
             onClick={exportFinalMovesOnly}
-            disabled={!moves.length || relocating}
+            disabled={!moves.length}
             className={`px-4 py-2 rounded-lg text-sm font-medium transition border ${
-              !moves.length || relocating
+              !moves.length
                 ? 'bg-gray-100 text-gray-400 border-black/10 cursor-not-allowed'
                 : 'bg-green-50 text-green-800 border-green-200 hover:bg-green-100 focus:outline-none focus:ring-2 focus:ring-green-200'
             }`}
