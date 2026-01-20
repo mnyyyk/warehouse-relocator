@@ -823,6 +823,9 @@ const OptimizePage: NextPage & { pageTitle?: string } = () => {
   const currentTraceId = reloMeta?.trace_id;
   useEffect(() => {
     if (!relocating) return;
+    // Don't poll until we have a trace_id for the current optimization
+    // This prevents fetching stale cached data from previous runs
+    if (!currentTraceId) return;
     // Don't poll if we already have valid results from API response
     if (livePlanned !== null && livePlanned > 0) return;
     let stop = false;
@@ -830,9 +833,7 @@ const OptimizePage: NextPage & { pageTitle?: string } = () => {
     const tick = async () => {
       try {
         // Use trace_id to get specific optimization result, not stale cache
-        const path = currentTraceId 
-          ? `/v1/upload/relocation/debug?trace_id=${encodeURIComponent(currentTraceId)}`
-          : '/v1/upload/relocation/debug';
+        const path = `/v1/upload/relocation/debug?trace_id=${encodeURIComponent(currentTraceId)}`;
         const { json } = await getWithFallback(path);
         if (stop) return;
         const p = typeof json?.planned === 'number' ? json.planned : null;
