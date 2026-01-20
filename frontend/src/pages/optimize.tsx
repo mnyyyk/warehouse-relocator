@@ -483,7 +483,96 @@ const OptimizePage: NextPage & { pageTitle?: string } = () => {
       if (Array.isArray(pickLevels) && pickLevels.length) payload.pick_levels = pickLevels;
       if (Array.isArray(storageLevels) && storageLevels.length) payload.storage_levels = storageLevels;
 
-      // 実際にAPIを呼び出す（相対→rewrites / 直叩き 両対応）
+      // 非同期API（start-async）を使用してタイムアウトを回避
+      // Celeryワーカーが動いている場合は即座にtrace_idが返り、ポーリングで結果を取得
+      // ワーカーがない場合はフォールバックとして同期APIを使用
+      let useAsync = true;
+      
+      if (useAsync) {
+        try {
+          console.log('[Relocation] Trying async API...');
+          const { json: asyncJson, via } = await postWithFallback('/v1/upload/relocation/start-async', payload);
+          console.log('[Relocation] Async API response:', asyncJson);
+          
+          if (asyncJson?.status === 'queued' && asyncJson?.trace_id) {
+            // タスクがキューされた - ステータスをポーリング
+            setReloStatus(`⏳ 最適化タスクをキュー中... (trace_id: ${asyncJson.trace_id})`);
+            
+            // ポーリングで結果を待つ
+            const pollAsyncResult = async () => {
+              const maxPolls = 180; // 最大6分待機（2秒 × 180）
+              for (let i = 0; i < maxPolls; i++) {
+                await new Promise(r => setTimeout(r, 2000));
+                try {
+                  const statusPath = `/v1/upload/relocation/status/${encodeURIComponent(asyncJson.trace_id)}`;
+                  const { json: statusJson } = await getWithFallback(statusPath);
+                  console.log(`[Async Polling ${i+1}/${maxPolls}] status:`, statusJson?.status);
+                  
+                  if (statusJson?.status === 'completed') {
+                    // 完了 - 結果を取得
+                    console.log('[Relocation] Async task completed:', statusJson);
+                    
+                    // rejection_summaryから planned/accepted を取得
+                    if (statusJson.rejection_summary) {
+                      const rs = statusJson.rejection_summary;
+                      if (typeof rs.planned === 'number') setLivePlanned(rs.planned);
+                      if (typeof rs.accepted === 'number') setLiveAccepted(rs.accepted);
+                    }
+                    
+                    // summary_reportを設定
+                    if (statusJson.summary_report) {
+                      setSummaryReport(statusJson.summary_report);
+                    }
+                    
+                    // 移動データを取得
+                    const mv: Move[] = Array.isArray(statusJson.moves) ? statusJson.moves : [];
+                    const mvWithDist: Move[] = mv.map((m: any) => ({
+                      ...m,
+                      distance: m.distance ?? distanceOf(m.from_loc, m.to_loc),
+                      lot_date: m.lot_date ?? deriveLotDate(m.lot),
+                    }));
+                    setMoves(mvWithDist);
+                    setSummary(statusJson.summary ?? null);
+                    setReloMeta({
+                      trace_id: asyncJson.trace_id,
+                      count: mvWithDist.length,
+                      max_moves: statusJson.max_moves,
+                      fill_rate: statusJson.fill_rate,
+                      block_codes: statusJson.block_codes,
+                      quality_names: statusJson.quality_names,
+                    });
+                    setReloStatus(`✔ 最適化完了（${mvWithDist.length}件, async via ${via}）`);
+                    return;
+                  } else if (statusJson?.status === 'failed') {
+                    // 失敗
+                    console.error('[Relocation] Async task failed:', statusJson.error);
+                    setReloStatus(`✖ 最適化失敗: ${statusJson.error || 'Unknown error'}`);
+                    return;
+                  } else if (statusJson?.status === 'running') {
+                    // 実行中 - 進捗表示
+                    const progress = statusJson.progress || {};
+                    setReloStatus(`⏳ 最適化実行中... (${progress.phase || 'processing'})`);
+                  }
+                } catch (pollErr) {
+                  console.warn(`[Async Polling ${i+1}] error:`, pollErr);
+                }
+              }
+              // タイムアウト
+              setReloStatus(`⚠ タイムアウト - サマリーレポートで結果を確認してください`);
+            };
+            
+            await pollAsyncResult();
+            return; // 非同期処理完了後は終了
+          }
+        } catch (asyncErr: any) {
+          // 非同期APIが失敗した場合は同期APIにフォールバック
+          console.warn('[Relocation] Async API failed, falling back to sync:', asyncErr?.message);
+          useAsync = false;
+        }
+      }
+
+      // フォールバック: 同期API（Celeryワーカーがない場合）
+      console.log('[Relocation] Using sync API...');
   const { json, via } = await postWithFallback('/v1/upload/relocation/start', payload);
       console.log('API response:', json); // デバッグログ
 

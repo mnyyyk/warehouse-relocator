@@ -20,7 +20,7 @@ from typing import Any, Dict, List, Optional, Literal, Generator
 from decimal import Decimal, ROUND_HALF_UP
 
 import pandas as pd
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, Query
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, Query, BackgroundTasks
 from fastapi.responses import StreamingResponse
 from sqlmodel import Session, SQLModel
 
@@ -168,10 +168,16 @@ def _ensure_tables() -> None:
         )
 
 # Auto‑create missing tables only when explicitly enabled.
-# Set environment variable AUTO_CREATE_TABLES=true (default) to allow this in dev.
-# In production where Alembic migrations are applied, set it to false/0.
-if (os.getenv("AUTO_CREATE_TABLES", "true") or "true").strip().lower() in ("1", "true", "yes", "on", "y", "t"):
-    _ensure_tables()
+# Set environment variable AUTO_CREATE_TABLES=true (default in dev) to allow this.
+# In production (ENV=production), this is DISABLED by default for fast startup.
+_is_production = os.getenv("ENV", "").lower() == "production"
+_auto_create = os.getenv("AUTO_CREATE_TABLES", "false" if _is_production else "true")
+if _auto_create.strip().lower() in ("1", "true", "yes", "on", "y", "t"):
+    try:
+        _ensure_tables()
+    except Exception as e:
+        # DB接続失敗時もアプリは起動させる（ヘルスチェック通過のため）
+        print(f"[upload] Warning: _ensure_tables() failed: {e}")
     def _ensure_optional_columns() -> None:
         """Dev‑convenience: ensure optional columns exist (non‑breaking).
 
@@ -213,7 +219,11 @@ if (os.getenv("AUTO_CREATE_TABLES", "true") or "true").strip().lower() in ("1", 
             # Dev 用の安全弁: 存在しないテーブル等での失敗を握りつぶす。
             # 本番では Alembic 側で確実に適用すること。
             pass
-    _ensure_optional_columns()
+    if not _is_production:  # 本番環境ではスキップ
+        try:
+            _ensure_optional_columns()
+        except Exception as e:
+            print(f"[upload] Warning: _ensure_optional_columns() failed: {e}")
 # NOTE: In production, DB schema is managed by Alembic migrations.
 
 
@@ -2553,6 +2563,15 @@ def relocation_start(
     except Exception:
         summary = {"moves": len(moves or [])}
 
+    # Cache moves for timeout recovery (allows frontend to poll /relocation/debug after timeout)
+    try:
+        from app.services.optimizer import cache_moves
+        if used_trace_id and moves_dicts:
+            cache_moves(used_trace_id, moves_dicts)
+            logger.info(f"Cached {len(moves_dicts)} moves for trace_id={used_trace_id}")
+    except Exception as e:
+        logger.warning(f"Failed to cache moves: {e}")
+
     # Compose response with summary - use normalized dicts instead of raw objects
     return {
         "moves": moves_dicts,
@@ -2570,6 +2589,176 @@ def relocation_start(
         "quality_names": req.quality_names,
         "rotation_window_days": req.rotation_window_days,
         "summary": summary,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Relocation ASYNC - Queue task to Celery worker (bypasses App Runner timeout)
+# ---------------------------------------------------------------------------
+@router.post("/relocation/start-async")
+def relocation_start_async(
+    req: RelocationStartRequest,
+    background_tasks: BackgroundTasks,
+    session: Session = Depends(get_session),
+):
+    """
+    Start relocation optimization asynchronously via Celery.
+    
+    Returns immediately with a trace_id that can be used to poll for status/results.
+    This endpoint bypasses App Runner's 120s timeout by offloading the work to a Celery worker.
+    
+    Poll /v1/upload/relocation/status/{trace_id} for status and results.
+    """
+    from app.services.relocation_tasks import run_relocation_async, store_relocation_status
+    
+    # Generate or use provided trace_id
+    trace_id = (req.trace_id or "").strip() if hasattr(req, "trace_id") else ""
+    if not trace_id:
+        trace_id = uuid4().hex[:12]
+    
+    # Build config dict for Celery task
+    config_dict = {}
+    effective_max_moves = req.max_moves if (req.max_moves is not None and req.max_moves > 0) else None
+    config_dict["max_moves"] = effective_max_moves
+    
+    for _k in (
+        "fill_rate", "use_ai", "ai_max_candidates", "require_volume", "use_ai_main",
+        "rotation_window_days", "chain_depth", "eviction_budget", "touch_budget",
+        "enable_pass0_area_rebalance", "enable_pass1_swap", "pass1_swap_budget_per_group",
+        "max_source_locs_per_sku", "pack_low_max", "pack_high_min", "band_pref_weight",
+        "depth_preference", "center_depth_weight",
+    ):
+        try:
+            _v = getattr(req, _k, None)
+            if _v is not None:
+                config_dict[_k] = _v
+        except Exception:
+            pass
+    
+    # Column band / keyword preferences
+    try:
+        if getattr(req, "near_cols", None):
+            config_dict["near_cols"] = [int(x) for x in req.near_cols]
+        if getattr(req, "far_cols", None):
+            config_dict["far_cols"] = [int(x) for x in req.far_cols]
+        if getattr(req, "promo_quality_keywords", None):
+            config_dict["promo_quality_keywords"] = [str(x) for x in req.promo_quality_keywords]
+    except Exception:
+        pass
+    
+    # Prepare filter sets
+    try:
+        _blocks = [str(b).strip() for b in (req.block_codes or []) if str(b).strip()]
+        _quals = [str(q).strip() for q in (req.quality_names or []) if str(q).strip()]
+    except Exception:
+        _blocks, _quals = [], []
+    
+    # -- Build source DataFrames from DB --
+    sku_df = _df_from_sku(session)
+    inv_df = _df_from_inventory(session)
+    
+    # Location master
+    try:
+        lm_rows = session.exec(_sa_select(
+            LocationMaster.block_code,
+            LocationMaster.quality_name,
+            LocationMaster.level,
+            LocationMaster.column,
+            LocationMaster.depth,
+            LocationMaster.numeric_id,
+            LocationMaster.display_code,
+            LocationMaster.can_receive,
+            LocationMaster.highness,
+            LocationMaster.capacity_m3,
+        )).all()
+        location_master_df = pd.DataFrame(lm_rows, columns=[
+            "block_code", "quality_name", "level", "column", "depth",
+            "numeric_id", "display_code", "can_receive", "highness", "capacity_m3"
+        ])
+    except Exception:
+        location_master_df = pd.DataFrame()
+    
+    # Apply filters to inventory
+    if not inv_df.empty:
+        if _blocks and "ブロック略称" in inv_df.columns:
+            inv_df = inv_df[inv_df["ブロック略称"].astype(str).isin(_blocks)]
+        if _quals:
+            qcol = "品質区分名" if "品質区分名" in inv_df.columns else ("quality_name" if "quality_name" in inv_df.columns else None)
+            if qcol:
+                inv_df = inv_df[inv_df[qcol].astype(str).isin(_quals)]
+    
+    # Apply filters to location master
+    if not location_master_df.empty:
+        if "can_receive" in location_master_df.columns:
+            location_master_df = location_master_df[location_master_df["can_receive"] == True]
+        if _blocks and "block_code" in location_master_df.columns:
+            location_master_df = location_master_df[location_master_df["block_code"].astype(str).isin(_blocks)]
+        if _quals and "quality_name" in location_master_df.columns:
+            location_master_df = location_master_df[location_master_df["quality_name"].astype(str).isin(_quals)]
+    
+    # Convert DataFrames to list of dicts for Celery serialization
+    sku_data = sku_df.to_dict(orient="records") if not sku_df.empty else []
+    inv_data = inv_df.to_dict(orient="records") if not inv_df.empty else []
+    location_master_data = location_master_df.to_dict(orient="records") if not location_master_df.empty else []
+    
+    # Store initial status
+    store_relocation_status(trace_id, "queued", {"phase": "queued"})
+    
+    # Queue Celery task
+    try:
+        run_relocation_async.apply_async(
+            kwargs={
+                "trace_id": trace_id,
+                "config_dict": config_dict,
+                "sku_data": sku_data,
+                "inv_data": inv_data,
+                "location_master_data": location_master_data,
+                "block_codes": _blocks or None,
+                "quality_names": _quals or None,
+            },
+            task_id=trace_id,  # Use trace_id as Celery task ID
+            queue="relocation",
+        )
+        logger.info(f"Queued relocation task: trace_id={trace_id}, inv_rows={len(inv_data)}, loc_rows={len(location_master_data)}")
+    except Exception as e:
+        logger.exception(f"Failed to queue relocation task: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to queue task: {e}")
+    
+    return {
+        "status": "queued",
+        "trace_id": trace_id,
+        "message": "Optimization task queued. Poll /v1/upload/relocation/status/{trace_id} for results.",
+        "inv_rows": len(inv_data),
+        "loc_master_rows": len(location_master_data),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Relocation Status - Get status and results of async task
+# ---------------------------------------------------------------------------
+@router.get("/relocation/status/{trace_id}")
+def relocation_status(trace_id: str):
+    """
+    Get the status and results of an async relocation task.
+    
+    Returns:
+    - status: "queued", "running", "completed", "failed", "unknown"
+    - If completed: full result with moves, summary, rejection_summary
+    """
+    from app.services.relocation_tasks import get_relocation_status, get_relocation_result, get_task_status
+    
+    # Try to get result first (if completed)
+    result = get_relocation_result(trace_id)
+    if result:
+        return result
+    
+    # Otherwise return status
+    status = get_task_status(trace_id)
+    return {
+        "status": status.get("status", "unknown"),
+        "trace_id": trace_id,
+        "progress": status.get("progress"),
+        "updated_at": status.get("updated_at"),
     }
 
 
@@ -3559,9 +3748,9 @@ def relocation_start_final_moves(req: RelocationStartRequest, session: Session =
         logger = logging.getLogger(__name__)
 
         # 入力の軽いバリデーション
-        if req.max_moves < 0:
+        if req.max_moves is not None and req.max_moves < 0:
             raise HTTPException(status_code=400, detail="max_moves must be >= 0")
-        if not (0.0 <= req.fill_rate <= 1.0):
+        if req.fill_rate is not None and not (0.0 <= req.fill_rate <= 1.0):
             raise HTTPException(status_code=400, detail="fill_rate must be in [0.0, 1.0]")
 
         # 既存のリロケーション実装を再利用して一貫した move 形式を得る
@@ -3586,8 +3775,8 @@ def relocation_start_final_moves(req: RelocationStartRequest, session: Session =
             "efficiency_percent": efficiency,
             "blocks": base.get("blocks", list(req.block_codes or [])),
             "quality_names": base.get("quality_names", list(req.quality_names or [])),
-            "max_moves": base.get("max_moves", int(req.max_moves)),
-            "fill_rate": base.get("fill_rate", float(req.fill_rate)),
+            "max_moves": base.get("max_moves", req.max_moves),
+            "fill_rate": base.get("fill_rate", req.fill_rate or 0.9),
             "chain_depth": base.get("chain_depth", int(getattr(req, "chain_depth", 0) or 0)),
             "eviction_budget": base.get("eviction_budget", int(getattr(req, "eviction_budget", 0) or 0)),
             "touch_budget": base.get("touch_budget", int(getattr(req, "touch_budget", 0) or 0)),

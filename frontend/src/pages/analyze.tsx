@@ -96,29 +96,45 @@ const AnalyzePage: NextPage & { pageTitle?: string } = () => {
   const qualities = selectedQualities;
 
   const loadQualityChoices = useCallback(async () => {
-    const limit = 500;
-    let offset = 0;
-    const s = new Set<string>();
     try {
-      while (true) {
-        const { json } = await getWithFallback(`/v1/debug/inventory?limit=${limit}&offset=${offset}`);
-        const rows = Array.isArray(json?.rows) ? json.rows : [];
-        rows.forEach((r: any) => {
-          const v = (r.quality_name ?? r['品質区分名'] ?? '').toString().trim();
-          if (v) s.add(v);
-        });
-        const total = typeof json?.total === 'number' ? json.total : 0;
-        offset += rows.length;
-        if (!rows.length || offset >= total || offset >= 10000) break;
-      }
-      const choices = Array.from(s).sort();
+      // 専用エンドポイントを使用（高速）
+      const { json } = await getWithFallback(`/v1/debug/quality_names`);
+      const choices = Array.isArray(json?.quality_names) ? json.quality_names : [];
+      console.log('[loadQualityChoices] Found choices:', choices);
       setQualityChoices(choices);
       if (!didAutoSelectQuality && selectedQualities.length === 0 && choices.includes('良品')) {
         setSelectedQualities(['良品']);
         setDidAutoSelectQuality(true);
       }
-    } catch {
-      setQualityChoices([]);
+    } catch (e) {
+      console.error('[loadQualityChoices] Error:', e);
+      // フォールバック: 在庫データからページング取得
+      const limit = 500;
+      let offset = 0;
+      const s = new Set<string>();
+      try {
+        while (true) {
+          const { json } = await getWithFallback(`/v1/debug/inventory?limit=${limit}&offset=${offset}`);
+          const rows = Array.isArray(json?.rows) ? json.rows : [];
+          rows.forEach((r: any) => {
+            const v = (r.quality_name ?? r['品質区分名'] ?? '').toString().trim();
+            if (v) s.add(v);
+          });
+          const total = typeof json?.total === 'number' ? json.total : 0;
+          offset += rows.length;
+          if (!rows.length || offset >= total || offset >= 10000) break;
+        }
+        const choices = Array.from(s).sort();
+        console.log('[loadQualityChoices] Fallback found choices:', choices);
+        setQualityChoices(choices);
+        if (!didAutoSelectQuality && selectedQualities.length === 0 && choices.includes('良品')) {
+          setSelectedQualities(['良品']);
+          setDidAutoSelectQuality(true);
+        }
+      } catch (e2) {
+        console.error('[loadQualityChoices] Fallback error:', e2);
+        setQualityChoices([]);
+      }
     }
   }, [didAutoSelectQuality, selectedQualities.length]);
 

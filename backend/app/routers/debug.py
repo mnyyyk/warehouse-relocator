@@ -39,6 +39,22 @@ def list_sku(
     return {"rows": [r.model_dump(mode="json") for r in rows], "total": int(total)}
 
 
+# --------------------------- 品質区分一覧 ----------------------------------
+@router.get("/quality_names")
+def list_quality_names(
+    session: Session = Depends(get_session),
+):
+    """在庫テーブルに存在するユニークな品質区分名を返す"""
+    quality_attr = getattr(Inventory, "quality_name", None)
+    if quality_attr is None:
+        return {"quality_names": []}
+    
+    stmt = select(quality_attr).distinct().where(quality_attr.isnot(None), quality_attr != "")
+    rows = session.exec(stmt).all()
+    names = sorted([str(r) for r in rows if r])
+    return {"quality_names": names}
+
+
 # --------------------------- INVENTORY ----------------------------------
 @router.get("/inventory")
 def list_inventory(
