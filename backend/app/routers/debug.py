@@ -563,3 +563,27 @@ def relocation_candidates(
         })
 
     return {"rows": out, "count": len(out)}
+
+
+# --------------------------- Celery Queue Purge ----------------------------------
+@router.post("/purge-celery-queue")
+def purge_celery_queue():
+    """Celeryキューをパージする（開発・デバッグ用）"""
+    import redis
+    redis_url = os.getenv("CELERY_BROKER_URL", os.getenv("REDIS_URL", "redis://localhost:6379/0"))
+    try:
+        r = redis.from_url(redis_url)
+        # Celeryのキューをクリア
+        deleted = 0
+        for key in ["relocation", "celery"]:
+            deleted += r.delete(key)
+        # 結果バックエンドのキーもクリア
+        for key in r.scan_iter("celery-task-meta-*"):
+            r.delete(key)
+            deleted += 1
+        for key in r.scan_iter("relocation:*"):
+            r.delete(key)
+            deleted += 1
+        return {"status": "ok", "message": f"Purged {deleted} keys from Redis"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to purge queue: {str(e)}")
