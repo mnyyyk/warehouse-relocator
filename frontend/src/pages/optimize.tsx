@@ -561,7 +561,12 @@ const OptimizePage: NextPage & { pageTitle?: string } = () => {
               setReloStatus(`⚠ タイムアウト - サマリーレポートで結果を確認してください`);
             };
             
-            await pollAsyncResult();
+            try {
+              await pollAsyncResult();
+            } finally {
+              // 非同期処理完了後は必ずrelocatingをfalseに
+              setRelocating(false);
+            }
             return; // 非同期処理完了後は終了
           }
         } catch (asyncErr: any) {
