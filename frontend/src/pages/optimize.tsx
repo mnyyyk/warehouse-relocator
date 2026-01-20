@@ -355,6 +355,11 @@ const OptimizePage: NextPage & { pageTitle?: string } = () => {
   const [liveAccepted, setLiveAccepted] = useState<number | null>(null);
   const [liveRejections, setLiveRejections] = useState<Record<string, number> | null>(null);
 
+  const [moves, setMoves] = useState<Move[]>([]);
+  const [reloMeta, setReloMeta] = useState<any>(null);
+  const [summary, setSummary] = useState<any | null>(null);
+  const [summaryReport, setSummaryReport] = useState<string | null>(null); // 総合評価レポート
+
   // Safety net: if we have accepted moves but no moves data, fetch from debug endpoint
   // This catches cases where the async flow completes but moves weren't properly set
   useEffect(() => {
@@ -396,11 +401,6 @@ const OptimizePage: NextPage & { pageTitle?: string } = () => {
       fetchMovesFromDebug();
     }
   }, [relocating, liveAccepted, moves.length]);
-
-  const [moves, setMoves] = useState<Move[]>([]);
-  const [reloMeta, setReloMeta] = useState<any>(null);
-  const [summary, setSummary] = useState<any | null>(null);
-  const [summaryReport, setSummaryReport] = useState<string | null>(null); // 総合評価レポート
 
   // ---- Drop diagnostics ----
   const [showDrops, setShowDrops] = useState<boolean>(false);
