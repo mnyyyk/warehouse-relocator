@@ -360,47 +360,9 @@ const OptimizePage: NextPage & { pageTitle?: string } = () => {
   const [summary, setSummary] = useState<any | null>(null);
   const [summaryReport, setSummaryReport] = useState<string | null>(null); // 総合評価レポート
 
-  // Safety net: if we have accepted moves but no moves data, fetch from debug endpoint
-  // This catches cases where the async flow completes but moves weren't properly set
-  useEffect(() => {
-    if (relocating && liveAccepted !== null && liveAccepted > 0 && moves.length === 0) {
-      console.log('[Safety] liveAccepted > 0 but no moves, fetching from debug endpoint');
-      
-      const fetchMovesFromDebug = async () => {
-        try {
-          const debugPath = `/v1/upload/relocation/debug`;
-          const resp = await fetch(`${API_BASE}${debugPath}`);
-          if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-          const debugJson = await resp.json();
-          
-          if (debugJson?.moves && Array.isArray(debugJson.moves) && debugJson.moves.length > 0) {
-            console.log('[Safety] Fetched moves from debug:', debugJson.moves.length);
-            const mv: Move[] = debugJson.moves.map((m: any) => ({
-              ...m,
-              distance: m.distance ?? 0,
-              lot_date: m.lot_date ?? m.lot?.slice(0, 10),
-            }));
-            setMoves(mv);
-            setRelocating(false);
-            setReloStatus(`✔ 最適化完了（${mv.length}件）`);
-            if (debugJson.summary_report) {
-              setSummaryReport(debugJson.summary_report);
-            }
-          } else {
-            // No moves in debug, just mark as complete
-            setRelocating(false);
-            setReloStatus(`✔ 最適化完了（${liveAccepted}件）`);
-          }
-        } catch (err) {
-          console.warn('[Safety] Failed to fetch moves from debug:', err);
-          setRelocating(false);
-          setReloStatus(`✔ 最適化完了（${liveAccepted}件）`);
-        }
-      };
-      
-      fetchMovesFromDebug();
-    }
-  }, [relocating, liveAccepted, moves.length]);
+  // Note: Removed the "safety net" useEffect that auto-fetched from /debug
+  // because it was causing stale cached data to be displayed.
+  // The proper flow should wait for the async task to complete and return moves.
 
   // ---- Drop diagnostics ----
   const [showDrops, setShowDrops] = useState<boolean>(false);
