@@ -552,6 +552,42 @@ const OptimizePage: NextPage & { pageTitle?: string } = () => {
                     // 実行中 - 進捗表示
                     const progress = statusJson.progress || {};
                     setReloStatus(`⏳ 最適化実行中... (${progress.phase || 'processing'})`);
+                  } else if (statusJson?.status === 'pending') {
+                    // まだキュー待ち - 進捗表示
+                    setReloStatus(`⏳ キュー待機中... (${i+1}/${maxPolls})`);
+                    // 20秒以上pendingが続いたら、/debugからデータを取得して完了とみなす
+                    if (i >= 10) {
+                      console.log('[Async Polling] Checking debug endpoint for fallback data...');
+                      try {
+                        const debugPath = `/v1/upload/relocation/debug?trace_id=${encodeURIComponent(asyncJson.trace_id)}`;
+                        const { json: debugJson } = await getWithFallback(debugPath);
+                        // debugからaccepted > 0のデータがあれば完了とみなす
+                        if (debugJson?.accepted && debugJson.accepted > 0 && debugJson.moves?.length > 0) {
+                          console.log('[Async Polling] Found completed data in debug endpoint:', debugJson.accepted, 'moves');
+                          if (debugJson.rejection_summary) {
+                            setLivePlanned(debugJson.rejection_summary.planned ?? debugJson.planned);
+                            setLiveAccepted(debugJson.rejection_summary.accepted ?? debugJson.accepted);
+                          } else {
+                            setLivePlanned(debugJson.planned);
+                            setLiveAccepted(debugJson.accepted);
+                          }
+                          if (debugJson.summary_report) {
+                            setSummaryReport(debugJson.summary_report);
+                          }
+                          const mv: Move[] = debugJson.moves.map((m: any) => ({
+                            ...m,
+                            distance: m.distance ?? distanceOf(m.from_loc, m.to_loc),
+                            lot_date: m.lot_date ?? deriveLotDate(m.lot),
+                          }));
+                          setMoves(mv);
+                          setSummary(debugJson.summary ?? null);
+                          setReloStatus(`✔ 最適化完了（${mv.length}件, debug fallback）`);
+                          return; // 完了
+                        }
+                      } catch (debugErr) {
+                        console.warn('[Async Polling] Debug endpoint error:', debugErr);
+                      }
+                    }
                   }
                 } catch (pollErr) {
                   console.warn(`[Async Polling ${i+1}] error:`, pollErr);
