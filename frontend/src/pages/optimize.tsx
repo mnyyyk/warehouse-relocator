@@ -348,20 +348,28 @@ const OptimizePage: NextPage & { pageTitle?: string } = () => {
   const [reloStatus, setReloStatus] = useState<string>('');
   const [relocating, setRelocating] = useState<boolean>(false);
   const [usingSSE, setUsingSSE] = useState<boolean>(false);
-
-  // Safety net: if moves exist and status shows completion, force relocating to false
-  useEffect(() => {
-    if (relocating && moves.length > 0 && (reloStatus.startsWith('✔') || reloStatus.startsWith('⚠'))) {
-      console.log('[Safety] Forcing relocating=false because moves exist and status is complete');
-      setRelocating(false);
-    }
-  }, [relocating, moves.length, reloStatus]);
   const esRef = useRef<EventSource | null>(null);
 
   // Live relocation debug polling (planned/accepted)
   const [livePlanned, setLivePlanned] = useState<number | null>(null);
   const [liveAccepted, setLiveAccepted] = useState<number | null>(null);
   const [liveRejections, setLiveRejections] = useState<Record<string, number> | null>(null);
+
+  // Safety net: if we have accepted moves, force relocating to false
+  // This catches cases where the status update is missed but data is already available
+  useEffect(() => {
+    if (relocating && liveAccepted !== null && liveAccepted > 0) {
+      console.log('[Safety] Forcing relocating=false because liveAccepted > 0:', liveAccepted);
+      // Give a small delay to allow any pending state updates to complete
+      const timer = setTimeout(() => {
+        setRelocating(false);
+        if (!reloStatus.startsWith('✔') && !reloStatus.startsWith('⚠') && !reloStatus.startsWith('✖')) {
+          setReloStatus(`✔ 最適化完了（${liveAccepted}件）`);
+        }
+      }, 500);
+      return () => clearTimeout(timer);
+    }
+  }, [relocating, liveAccepted, reloStatus]);
 
   const [moves, setMoves] = useState<Move[]>([]);
   const [reloMeta, setReloMeta] = useState<any>(null);
