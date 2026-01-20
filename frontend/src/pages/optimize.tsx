@@ -382,6 +382,10 @@ const OptimizePage: NextPage & { pageTitle?: string } = () => {
     setReloStatus('最適化を実行中...');
     setMoves([]);
     setSummaryReport(null); // 総合評価レポートをリセット
+    // 前回の値をリセットして、現在の処理の値のみを表示
+    setLivePlanned(null);
+    setLiveAccepted(null);
+    setLiveRejections(null);
     
     // --- Prepare a client trace id (defined outside try for catch access) ---
     const traceId = (() => {
