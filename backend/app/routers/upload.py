@@ -2607,14 +2607,27 @@ def relocation_start_async(
     Returns immediately with a trace_id that can be used to poll for status/results.
     This endpoint bypasses App Runner's 120s timeout by offloading the work to a Celery worker.
     
+    If a previous task is still running, it will be cancelled when the new task starts.
+    
     Poll /v1/upload/relocation/status/{trace_id} for status and results.
     """
-    from app.services.relocation_tasks import run_relocation_async, store_relocation_status
+    from app.services.relocation_tasks import (
+        run_relocation_async,
+        store_relocation_status,
+        set_active_task,
+        cancel_task,
+    )
     
     # Generate or use provided trace_id
     trace_id = (req.trace_id or "").strip() if hasattr(req, "trace_id") else ""
     if not trace_id:
         trace_id = uuid4().hex[:12]
+    
+    # Cancel previous active task if any
+    previous_task_id = set_active_task(trace_id)
+    if previous_task_id and previous_task_id != trace_id:
+        logger.info(f"Cancelling previous task {previous_task_id} in favor of {trace_id}")
+        cancel_task(previous_task_id)
     
     # Build config dict for Celery task
     config_dict = {}

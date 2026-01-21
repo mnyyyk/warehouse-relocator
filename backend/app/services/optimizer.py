@@ -3565,16 +3565,31 @@ def plan_relocation(
     processed_rows = 0
     total_rows = len(order_idx)
     progress_mod = max(1, total_rows // 20)  # Show progress every 5% of total, at least every row
+    cancellation_check_mod = max(1, total_rows // 10)  # Check cancellation every 10%
     def _log(msg):
         try:
             print(f"[optimizer] {msg}")
         except Exception:
             pass
     
+    # Import cancellation check function
+    try:
+        from app.services.relocation_tasks import is_task_cancelled
+    except ImportError:
+        is_task_cancelled = lambda x: False  # Fallback if not available
+    
     for idx in order_idx:
         # move cap（UIの最大など）を厳守
         if getattr(cfg, "max_moves", None) is not None and len(moves) >= int(getattr(cfg, "max_moves")):
             break
+        
+        # Check if task was cancelled (superseded by newer request)
+        if processed_rows % cancellation_check_mod == 0 and processed_rows > 0:
+            current_trace = get_current_trace_id()
+            if current_trace and is_task_cancelled(current_trace):
+                _log(f"Task {current_trace} cancelled, stopping optimization early")
+                break
+        
         row = inv.loc[idx]
         processed_rows += 1
         if processed_rows % progress_mod == 0:

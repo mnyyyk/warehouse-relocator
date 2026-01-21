@@ -53,6 +53,9 @@ logger = logging.getLogger(__name__)
 # Redis client for result storage (separate from Celery result backend for custom TTL)
 _redis_client = None
 
+# Key for tracking the currently active task
+ACTIVE_TASK_KEY = "relocation:active_task"
+
 
 def _get_redis():
     """Lazy-load Redis client."""
@@ -66,6 +69,70 @@ def _get_redis():
             logger.warning(f"Failed to connect to Redis: {e}")
             return None
     return _redis_client
+
+
+def set_active_task(trace_id: str, ttl: int = 1800) -> str | None:
+    """
+    Set the currently active task and return the previous active task ID (if any).
+    This allows cancelling the previous task when a new one starts.
+    
+    Returns the previous task ID or None.
+    """
+    r = _get_redis()
+    if r is None:
+        return None
+    try:
+        # Get previous active task
+        previous = r.get(ACTIVE_TASK_KEY)
+        # Set new active task
+        r.setex(ACTIVE_TASK_KEY, ttl, trace_id)
+        logger.info(f"Set active task: {trace_id} (previous: {previous})")
+        return previous
+    except Exception as e:
+        logger.warning(f"Failed to set active task: {e}")
+        return None
+
+
+def get_active_task() -> str | None:
+    """Get the currently active task ID."""
+    r = _get_redis()
+    if r is None:
+        return None
+    try:
+        return r.get(ACTIVE_TASK_KEY)
+    except Exception:
+        return None
+
+
+def is_task_cancelled(trace_id: str) -> bool:
+    """
+    Check if this task has been superseded by a newer task.
+    Returns True if the task should stop processing.
+    """
+    active = get_active_task()
+    if active is None:
+        return False  # No active task tracking, continue
+    return active != trace_id
+
+
+def cancel_task(trace_id: str) -> bool:
+    """
+    Cancel a Celery task by revoking it.
+    Returns True if revoke was attempted.
+    """
+    try:
+        from celery.result import AsyncResult
+        result = AsyncResult(trace_id, app=celery_app)
+        # Revoke with terminate=True to kill running tasks
+        celery_app.control.revoke(trace_id, terminate=True, signal='SIGTERM')
+        logger.info(f"Revoked task: {trace_id}")
+        
+        # Update status to cancelled
+        store_relocation_status(trace_id, "cancelled", {"reason": "superseded by new task"})
+        return True
+    except Exception as e:
+        logger.warning(f"Failed to revoke task {trace_id}: {e}")
+        return False
 
 
 def store_relocation_result(trace_id: str, result: dict, ttl: int = 3600) -> bool:
@@ -269,6 +336,17 @@ def run_relocation_async(
     started_at = datetime.utcnow()
     logger.info(f"[relocation.run_async] Starting task for trace_id={trace_id}")
     
+    # Check if this task was already cancelled (superseded by newer task)
+    if is_task_cancelled(trace_id):
+        logger.info(f"[relocation.run_async] Task {trace_id} was cancelled before starting")
+        return {
+            "status": "cancelled",
+            "trace_id": trace_id,
+            "error": "新しいリクエストにより前のタスクがキャンセルされました",
+            "started_at": started_at.isoformat(),
+            "finished_at": datetime.utcnow().isoformat(),
+        }
+    
     # Update status to running
     store_relocation_status(trace_id, "running", {"phase": "starting"})
     
@@ -279,6 +357,12 @@ def run_relocation_async(
         location_master_df = pd.DataFrame(location_master_data) if location_master_data else pd.DataFrame()
         
         logger.info(f"[relocation.run_async] DataFrames: sku={len(sku_df)}, inv={len(inv_df)}, loc={len(location_master_df)}")
+        
+        # Check cancellation again before heavy processing
+        if is_task_cancelled(trace_id):
+            logger.info(f"[relocation.run_async] Task {trace_id} cancelled before optimization")
+            store_relocation_status(trace_id, "cancelled", {"reason": "superseded"})
+            return {"status": "cancelled", "trace_id": trace_id}
         
         # Build OptimizerConfig from dict
         if OptimizerConfig is not None:
