@@ -3566,6 +3566,13 @@ def plan_relocation(
     total_rows = len(order_idx)
     progress_mod = max(1, total_rows // 20)  # Show progress every 5% of total, at least every row
     cancellation_check_mod = max(1, total_rows // 10)  # Check cancellation every 10%
+    
+    # Time limit for main loop processing (default 5 minutes = 300 seconds)
+    import time as _time_module
+    _loop_start_time = _time_module.time()
+    _loop_time_limit = float(getattr(cfg, "loop_time_limit", 300))  # seconds
+    _time_check_mod = max(1, total_rows // 50)  # Check time every 2%
+    
     def _log(msg):
         try:
             print(f"[optimizer] {msg}")
@@ -3590,6 +3597,17 @@ def plan_relocation(
                 _log(f"Task {current_trace} cancelled, stopping optimization early")
                 break
         
+        # Time limit check - stop if we've exceeded the time budget
+        if processed_rows % _time_check_mod == 0 and processed_rows > 0:
+            elapsed = _time_module.time() - _loop_start_time
+            if elapsed > _loop_time_limit:
+                _log(f"Time limit reached ({elapsed:.1f}s > {_loop_time_limit}s), stopping with {len(moves)} moves after {processed_rows}/{total_rows} rows")
+                _publish_progress(get_current_trace_id(), {
+                    "type": "info", "phase": "plan",
+                    "message": f"処理時間制限に達しました（{int(elapsed)}秒）。{len(moves)}件の移動案で終了します。"
+                })
+                break
+        
         row = inv.loc[idx]
         processed_rows += 1
         if processed_rows % progress_mod == 0:
@@ -3597,7 +3615,8 @@ def plan_relocation(
                 rem = (int(getattr(cfg, "max_moves")) - len(moves)) if getattr(cfg, "max_moves", None) is not None else None
             except Exception:
                 rem = None
-            _log(f"main: processed {processed_rows}/{total_rows}; moves={len(moves)} remaining={rem}")
+            elapsed = _time_module.time() - _loop_start_time
+            _log(f"main: processed {processed_rows}/{total_rows}; moves={len(moves)} remaining={rem} elapsed={elapsed:.1f}s")
             try:
                 progress_pct = int(100 * processed_rows / total_rows) if total_rows > 0 else 0
                 msg = f"在庫処理中: {processed_rows}/{total_rows}行 ({progress_pct}%) - 移動案{len(moves)}件"
