@@ -7,6 +7,7 @@ Results are stored in Redis via Celery's result backend.
 
 from __future__ import annotations
 
+import celery
 import json
 import logging
 import os
@@ -17,7 +18,7 @@ from uuid import uuid4
 
 import pandas as pd
 from celery import states
-from celery.exceptions import Ignore
+from celery.exceptions import Ignore, SoftTimeLimitExceeded
 from celery.result import AsyncResult
 
 from app.core.celery_app import celery_app, RESULT_BACKEND
@@ -216,7 +217,16 @@ def _build_summary(inv_df: pd.DataFrame, moves_data: list[dict]) -> dict:
     }
 
 
-@celery_app.task(bind=True, name="relocation.run_async", queue="relocation")
+# Hard timeout: 10 minutes (600s), soft timeout: 9 minutes (540s)
+# This prevents tasks from hanging indefinitely
+@celery_app.task(
+    bind=True,
+    name="relocation.run_async",
+    queue="relocation",
+    time_limit=600,      # Hard kill after 10 minutes
+    soft_time_limit=540,  # Raise SoftTimeLimitExceeded after 9 minutes
+    acks_late=True,       # Acknowledge after task completion (retry on worker crash)
+)
 def run_relocation_async(
     self,
     *,
@@ -419,6 +429,23 @@ def run_relocation_async(
         store_relocation_status(trace_id, "failed", {"error": str(exc)})
         
         # Don't re-raise to avoid Celery retry; the error is stored in result
+        return error_result
+
+    except SoftTimeLimitExceeded:
+        # Handle soft time limit (9 minutes)
+        logger.warning(f"[relocation.run_async] Task timed out for trace_id={trace_id}")
+        
+        error_result = {
+            "status": "failed",
+            "trace_id": trace_id,
+            "error": "最適化がタイムアウトしました（9分）。データ量を減らすか、max_movesを小さくしてお試しください。",
+            "started_at": started_at.isoformat(),
+            "finished_at": datetime.utcnow().isoformat(),
+        }
+        
+        store_relocation_result(trace_id, error_result, ttl=3600)
+        store_relocation_status(trace_id, "timeout", {"error": error_result["error"]})
+        
         return error_result
 
 
