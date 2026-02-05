@@ -2547,6 +2547,7 @@ class _CandidateEvalResult:
     area_needs_mix: bool
     candidate_ev_chain: List[Move]
     failure_reason: Optional[str] = None  # "capacity", "fifo", "pack_band", "forbidden", etc.
+    eviction_chain_group_id: Optional[str] = None  # chain_group_id for eviction chain moves
 
 
 def _evaluate_candidate_location(
@@ -2671,6 +2672,7 @@ def _evaluate_candidate_location(
     
     # Capacity check and eviction chain planning
     candidate_ev_chain: List[Move] = []
+    eviction_chain_group_id: Optional[str] = None
     used = float(shelf_usage.get(to_loc, 0.0))
     limit = cap_by_loc.get(to_loc, cap_limit) if cap_by_loc else cap_limit
     if used + need_vol > limit:
@@ -2691,6 +2693,9 @@ def _evaluate_candidate_location(
                     score=math.inf, area_needs_mix=False, candidate_ev_chain=[],
                     failure_reason="capacity"
                 )
+            # Generate chain_group_id for eviction chain
+            eviction_chain_group_id = f"evict_{secrets.token_hex(6)}"
+            
             # In serial mode, we can plan eviction (but this code path won't be used in parallel)
             candidate_ev_chain_result = _plan_eviction_chain(
                 need_vol=need_vol,
@@ -2708,6 +2713,8 @@ def _evaluate_candidate_location(
                 hard_pack_A=hard_pack_A,
                 ease_weight=getattr(cfg, "ease_weight", 0.0001),
                 cfg=cfg,
+                chain_group_id=eviction_chain_group_id,
+                execution_order_start=1,
             )
             if candidate_ev_chain_result is None:
                 return _CandidateEvalResult(
@@ -2760,7 +2767,8 @@ def _evaluate_candidate_location(
         score=score,
         area_needs_mix=area_needs_mix,
         candidate_ev_chain=candidate_ev_chain,
-        failure_reason=None
+        failure_reason=None,
+        eviction_chain_group_id=eviction_chain_group_id,
     )
 
 
@@ -2781,6 +2789,8 @@ def _plan_eviction_chain(
     hard_pack_A: bool = False,
     ease_weight: float = 0.0001,
     cfg: OptimizerConfig | None = None,
+    chain_group_id: Optional[str] = None,
+    execution_order_start: int = 1,
 ) -> Optional[List[Move]]:
     """Try to free `need_vol` capacity on `target_loc` by evicting whole rows.
     Returns a list of eviction moves in execution order if successful; otherwise None.
@@ -2888,6 +2898,8 @@ def _plan_eviction_chain(
                 hard_pack_A=hard_pack_A,
                 ease_weight=ease_weight,
                 cfg=cfg,
+                chain_group_id=chain_group_id,
+                execution_order_start=execution_order_start + len(chain),
             )
             if sub is None:
                 continue
@@ -2904,6 +2916,10 @@ def _plan_eviction_chain(
         qty_cases = int(row.get("qty_cases_move") or 0)
         if qty_cases <= 0:
             continue
+        
+        # Calculate execution_order based on current chain length + submoves
+        current_exec_order = execution_order_start + len(chain) + len(submoves)
+        
         mv = Move(
             sku_id=sku,
             lot=lot_str,
@@ -2912,6 +2928,8 @@ def _plan_eviction_chain(
             to_loc=str(dest).zfill(8),
             lot_date=_lot_key_to_datestr8(lk),
             reason=f"容量確保退避(連鎖深度{budget.max_depth_used}) → スペース創出・効率配置",
+            chain_group_id=chain_group_id,
+            execution_order=current_exec_order if chain_group_id else None,
         )
         # apply state updates
         shelf_usage[str(row["ロケーション"])] = max(0.0, shelf_usage.get(str(row["ロケーション"]), 0.0) - vol_move)
@@ -3102,6 +3120,7 @@ def _pass0_area_rebalance(
             best_choice: Optional[Tuple[str, int, int, int]] = None
             best_score = math.inf
             best_ev_chain: List[Move] = []
+            best_ev_chain_group_id: Optional[str] = None
 
             # 候補ロケ:事前フィルタ済みのみをループ
             # パフォーマンス最適化: 候補が多すぎる場合は容量空き順でトップN件のみ評価
@@ -3145,6 +3164,7 @@ def _pass0_area_rebalance(
                             continue
 
                 candidate_ev_chain: List[Move] = []
+                candidate_ev_chain_group_id: Optional[str] = None
                 # 容量不足時のチェーン処理
                 if needs_eviction:
                     # 有界チェーンで空ける
@@ -3154,6 +3174,9 @@ def _pass0_area_rebalance(
                         touch_left=int(getattr(cfg, "touch_budget", 0)),
                         touched=set([from_loc, to_loc]),
                     )
+                    # Generate chain_group_id for eviction chain
+                    candidate_ev_chain_group_id = f"evict_{secrets.token_hex(6)}"
+                    
                     chain = _plan_eviction_chain(
                         need_vol=need_vol,
                         target_loc=str(to_loc),
@@ -3170,6 +3193,8 @@ def _pass0_area_rebalance(
                         hard_pack_A=False,
                         ease_weight=getattr(cfg, "ease_weight", 0.0001),
                         cfg=cfg,
+                        chain_group_id=candidate_ev_chain_group_id,
+                        execution_order_start=1,
                     )
                     if chain is None:
                         continue
@@ -3196,6 +3221,7 @@ def _pass0_area_rebalance(
                     best_score = s
                     best_choice = (str(to_loc), tlv, tcol, tdep)
                     best_ev_chain = candidate_ev_chain
+                    best_ev_chain_group_id = candidate_ev_chain_group_id
 
             if best_choice is None:
                 continue
@@ -3280,6 +3306,9 @@ def _pass0_area_rebalance(
             if improvements:
                 move_reason += " → " + "、".join(improvements)
             
+            # Calculate execution_order for main move (after eviction chain)
+            main_exec_order = len(best_ev_chain) + 1 if best_ev_chain_group_id else None
+            
             mv = Move(
                 sku_id=str(row["商品ID"]),
                 lot=str(row.get("ロット") or ""),
@@ -3288,6 +3317,8 @@ def _pass0_area_rebalance(
                 to_loc=str(to_loc).zfill(8),
                 lot_date=_lot_key_to_datestr8(lk),
                 reason=move_reason,
+                chain_group_id=best_ev_chain_group_id,
+                execution_order=main_exec_order,
             )
             moves.append(mv)
             # apply state

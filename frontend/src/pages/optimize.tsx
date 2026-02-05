@@ -901,22 +901,30 @@ const OptimizePage: NextPage & { pageTitle?: string } = () => {
     const finalMoves: any[] = [];
     let consolidatedCount = 0;
     
+    // Helper to generate unique chain_group_id
+    const generateChainGroupId = () => `consol_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+    
     for (const [key, chain] of chains.entries()) {
       if (chain.length === 1) {
-        // 単一移動の場合はそのまま
+        // 単一移動の場合はそのまま（元の chain_group_id を保持）
         finalMoves.push(chain[0]);
       } else {
         // 複数移動の場合は統合
         const firstMove = chain[0];
         const lastMove = chain[chain.length - 1];
         
+        // Use existing chain_group_id from first move, or generate new one
+        const chainGroupId = firstMove.chain_group_id || generateChainGroupId();
+        
         const consolidatedMove = {
           ...lastMove,
           from_loc: firstMove.from_loc,
+          chain_group_id: chainGroupId,
+          execution_order: chain.length,  // Final step number
           chain_info: {
             is_consolidated: true,
             original_steps: chain.length,
-            intermediate_locations: chain.slice(0, -1).map(m => m.to_loc)
+            intermediate_locations: chain.slice(0, -1).map((m: any) => m.to_loc)
           }
         };
         
