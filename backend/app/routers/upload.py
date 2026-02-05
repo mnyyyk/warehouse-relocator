@@ -2228,7 +2228,7 @@ class RelocationStartRequest(BaseModel):
     # --- SKU移動元ロケーション数制限 ---
     max_source_locs_per_sku: int | None = 2  # 1SKUあたり最大何ロケーションから移動するか（None=無制限）
     # --- 連鎖退避の有効化と予算（optimizer.py で実装済みの新機能） ---
-    chain_depth: int = 2           # 0=無効, 1..N=最大連鎖段数（デフォルト2）
+    chain_depth: int = 1           # 0=無効, 1..N=最大連鎖段数（デフォルト1=浅い連鎖）
     eviction_budget: int = 50      # 退避移動の総数上限（デフォルト有効）
     touch_budget: int = 100        # 連鎖で触ってよいユニークロケ数の上限（デフォルト有効）
     # --- 高コストパスのトグル（高速化に有効） ---
@@ -2556,6 +2556,8 @@ def relocation_start(
                         "lot_date": getattr(m, "lot_date", None),
                         "distance": getattr(m, "distance", None),
                         "reason": getattr(m, "reason", None),
+                        "chain_group_id": getattr(m, "chain_group_id", None),
+                        "execution_order": getattr(m, "execution_order", None),
                     })
                 except Exception:
                     pass

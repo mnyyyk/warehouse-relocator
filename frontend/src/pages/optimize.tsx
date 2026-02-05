@@ -249,8 +249,8 @@ const OptimizePage: NextPage & { pageTitle?: string } = () => {
   const [windowDays, setWindowDays] = useState(90);
 
   // ---- Advanced budgets / depths (optional inputs; send only when provided) ----
-  // 連鎖退避をデフォルトで“有効(深さ2)”にし、予算も有効値に設定
-  const [chainDepthInput, setChainDepthInput] = useState<string>('2');
+  // 連鎖退避をデフォルトで“有効(深さ1)”にし、予算も有効値に設定
+  const [chainDepthInput, setChainDepthInput] = useState<string>('1');
   const [evictionBudgetInput, setEvictionBudgetInput] = useState<string>('50');
   const [touchBudgetInput, setTouchBudgetInput] = useState<string>('1000');
 
@@ -508,7 +508,7 @@ const OptimizePage: NextPage & { pageTitle?: string } = () => {
             
             // ポーリングで結果を待つ
             const pollAsyncResult = async () => {
-              const maxPolls = 180; // 最大6分待機（2秒 × 180）
+              const maxPolls = 900; // 最大30分待機（2秒 × 900）
               for (let i = 0; i < maxPolls; i++) {
                 await new Promise(r => setTimeout(r, 2000));
                 try {
@@ -856,7 +856,7 @@ const OptimizePage: NextPage & { pageTitle?: string } = () => {
 
   const exportCsv = useCallback(() => {
     if (!moves.length) return;
-    const header = ['sku_id', 'lot', 'lot_date', 'qty', 'from_loc', 'to_loc', 'distance', 'reason'];
+    const header = ['sku_id', 'lot', 'lot_date', 'qty', 'from_loc', 'to_loc', 'chain_group_id', 'execution_order', 'distance', 'reason'];
     const lines = [
       header.join(','),
       ...moves.map((m) =>
@@ -867,6 +867,8 @@ const OptimizePage: NextPage & { pageTitle?: string } = () => {
           String(m.qty ?? ''),
           m.from_loc ?? '',
           m.to_loc ?? '',
+          (m as any).chain_group_id ?? '',
+          (m as any).execution_order != null ? String((m as any).execution_order) : '',
           (m.distance ?? '').toString(),
           (m as any).reason ?? '',
         ]
@@ -971,7 +973,7 @@ const OptimizePage: NextPage & { pageTitle?: string } = () => {
       console.log(`最終移動取得完了: ${json.original_count}件 → ${json.count}件（効率: ${json.efficiency_percent?.toFixed(1)}%）`);
 
       // CSV形式でエクスポート
-      const header = ['sku_id', 'lot', 'lot_date', 'qty', 'from_loc', 'to_loc', 'distance', 'is_consolidated', 'original_steps', 'intermediate_locations', 'reason'];
+      const header = ['sku_id', 'lot', 'lot_date', 'qty', 'from_loc', 'to_loc', 'chain_group_id', 'execution_order', 'distance', 'is_consolidated', 'original_steps', 'intermediate_locations', 'reason'];
       const lines = [
         header.join(','),
         ...json.moves.map((m: any) => {
@@ -983,6 +985,8 @@ const OptimizePage: NextPage & { pageTitle?: string } = () => {
             String(m.qty ?? ''),
             m.from_loc ?? '',
             m.to_loc ?? '',
+            m.chain_group_id ?? '',
+            m.execution_order != null ? String(m.execution_order) : '',
             (m.distance ?? '').toString(),
             chainInfo.is_consolidated ? 'はい' : 'いいえ',
             String(chainInfo.original_steps || 1),

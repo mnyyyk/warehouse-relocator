@@ -284,14 +284,14 @@ def _build_summary(inv_df: pd.DataFrame, moves_data: list[dict]) -> dict:
     }
 
 
-# Hard timeout: 10 minutes (600s), soft timeout: 9 minutes (540s)
-# This prevents tasks from hanging indefinitely
+# Hard timeout: 35 minutes (2100s), soft timeout: 30 minutes (1800s)
+# Extended to allow full optimization with large inventories (~557 rows at 2-3 sec/row)
 @celery_app.task(
     bind=True,
     name="relocation.run_async",
     queue="relocation",
-    time_limit=600,      # Hard kill after 10 minutes
-    soft_time_limit=540,  # Raise SoftTimeLimitExceeded after 9 minutes
+    time_limit=2100,      # Hard kill after 35 minutes
+    soft_time_limit=1800,  # Raise SoftTimeLimitExceeded after 30 minutes
     acks_late=True,       # Acknowledge after task completion (retry on worker crash)
 )
 def run_relocation_async(
@@ -449,6 +449,8 @@ def run_relocation_async(
                         "lot_date": getattr(m, "lot_date", None),
                         "distance": getattr(m, "distance", None),
                         "reason": getattr(m, "reason", None),
+                        "chain_group_id": getattr(m, "chain_group_id", None),
+                        "execution_order": getattr(m, "execution_order", None),
                     })
                 except Exception:
                     pass

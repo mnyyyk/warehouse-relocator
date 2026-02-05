@@ -139,6 +139,78 @@ _SUMMARY_REPORTS_LIMIT = 50  # 最大保存件数
 _MOVES_CACHE: Dict[str, List[Dict[str, Any]]] = {}  # trace_id -> moves
 _MOVES_CACHE_LIMIT = 10  # 最大保存件数
 
+# --------------------------------
+# Global inventory indexes for fast lookup (shared across functions)
+# These are populated by plan_relocation and used by eviction chain functions
+# --------------------------------
+_GLOBAL_INV_INDEXES: Dict[str, Any] = {
+    "inv_lots_by_loc_sku": {},      # (location, sku) -> set of lot_keys
+    "inv_cols_by_sku_lot": {},      # (sku, lot_key) -> set of columns
+    "inv_lot_levels_by_sku_col": {},  # (sku, column) -> list of (lot_key, level)
+    "inv_rows_by_loc": {},          # location -> list of row indices (for eviction chain)
+}
+
+def _reset_global_inv_indexes() -> None:
+    """Reset global inventory indexes."""
+    global _GLOBAL_INV_INDEXES
+    _GLOBAL_INV_INDEXES = {
+        "inv_lots_by_loc_sku": {},
+        "inv_cols_by_sku_lot": {},
+        "inv_lot_levels_by_sku_col": {},
+        "inv_rows_by_loc": {},
+    }
+
+def _build_global_inv_indexes(inv: pd.DataFrame) -> None:
+    """Build global inventory indexes for fast lookup in eviction chain functions."""
+    global _GLOBAL_INV_INDEXES
+    _reset_global_inv_indexes()
+    
+    if inv.empty or "商品ID" not in inv.columns or "lot_key" not in inv.columns:
+        return
+    
+    inv_lots_by_loc_sku: Dict[Tuple[str, str], Set[int]] = {}
+    inv_cols_by_sku_lot: Dict[Tuple[str, int], Set[int]] = {}
+    inv_lot_levels_by_sku_col: Dict[Tuple[str, int], List[Tuple[int, int]]] = {}
+    inv_rows_by_loc: Dict[str, List[int]] = {}
+    
+    for idx_row in inv.index:
+        try:
+            sku_v = str(inv.at[idx_row, "商品ID"])
+            loc_v = str(inv.at[idx_row, "ロケーション"]) if "ロケーション" in inv.columns else ""
+            lot_k = int(pd.to_numeric(inv.at[idx_row, "lot_key"], errors="coerce") or UNKNOWN_LOT_KEY)
+            col_v = int(inv.at[idx_row, "col"]) if "col" in inv.columns and pd.notna(inv.at[idx_row, "col"]) else 0
+            lv_v = int(inv.at[idx_row, "lv"]) if "lv" in inv.columns and pd.notna(inv.at[idx_row, "lv"]) else 0
+            
+            # Index 1: lots by (location, sku)
+            key1 = (loc_v, sku_v)
+            if key1 not in inv_lots_by_loc_sku:
+                inv_lots_by_loc_sku[key1] = set()
+            inv_lots_by_loc_sku[key1].add(lot_k)
+            
+            # Index 2: columns by (sku, lot_key)
+            key2 = (sku_v, lot_k)
+            if key2 not in inv_cols_by_sku_lot:
+                inv_cols_by_sku_lot[key2] = set()
+            inv_cols_by_sku_lot[key2].add(col_v)
+            
+            # Index 3: lot_key and level by (sku, column)
+            key3 = (sku_v, col_v)
+            if key3 not in inv_lot_levels_by_sku_col:
+                inv_lot_levels_by_sku_col[key3] = []
+            inv_lot_levels_by_sku_col[key3].append((lot_k, lv_v))
+            
+            # Index 4: row indices by location (for eviction chain)
+            if loc_v not in inv_rows_by_loc:
+                inv_rows_by_loc[loc_v] = []
+            inv_rows_by_loc[loc_v].append(idx_row)
+        except Exception:
+            pass
+    
+    _GLOBAL_INV_INDEXES["inv_lots_by_loc_sku"] = inv_lots_by_loc_sku
+    _GLOBAL_INV_INDEXES["inv_cols_by_sku_lot"] = inv_cols_by_sku_lot
+    _GLOBAL_INV_INDEXES["inv_lot_levels_by_sku_col"] = inv_lot_levels_by_sku_col
+    _GLOBAL_INV_INDEXES["inv_rows_by_loc"] = inv_rows_by_loc
+
 def cache_moves(trace_id: str, moves: List[Dict[str, Any]]) -> None:
     """Cache moves for a given trace_id (for timeout recovery)."""
     global _MOVES_CACHE
@@ -357,6 +429,14 @@ class Move:
     lot_date: Optional[str] = None
     # Reason for this relocation
     reason: Optional[str] = None
+    # Chain group ID for linked moves (eviction chains, swaps)
+    # Moves with the same chain_group_id should be executed together
+    chain_group_id: Optional[str] = None
+    # Execution order within a chain group (1, 2, 3...)
+    # Lower numbers should be executed first
+    execution_order: Optional[int] = None
+    # Distance metric (optional, for reporting)
+    distance: Optional[float] = None
 
 
 # 入数が±帯域内か判定
@@ -385,6 +465,155 @@ def _datestr8_to_lot_key(datestr8: Optional[str]) -> int:
     except Exception:
         pass
     return UNKNOWN_LOT_KEY
+
+
+def _validate_post_move_state(
+    inv_before: pd.DataFrame,
+    moves: List["Move"],
+) -> Dict[str, Any]:
+    """
+    移動後の状態を検証し、問題点をレポートする。
+    
+    Returns:
+        Dict with validation results:
+        - fifo_violations: FIFO違反（古いロットが後から引き当てられる）
+        - sku_dispersion_issues: SKU分散悪化（移動後にロケーション数が増えた）
+        - validation_passed: 全体の検証結果
+    """
+    validation = {
+        "fifo_violations": [],
+        "sku_dispersion_issues": [],
+        "sku_dispersion_improved": [],
+        "validation_passed": True,
+        "total_issues": 0,
+    }
+    
+    if len(moves) == 0 or inv_before.empty:
+        return validation
+    
+    # 必要な列があるかチェック
+    required_cols = ["商品ID", "ロケーション", "ロット"]
+    if not all(col in inv_before.columns for col in required_cols):
+        return validation
+    
+    # lot_keyがない場合は追加
+    if "lot_key" not in inv_before.columns:
+        inv_before = inv_before.copy()
+        inv_before["lot_key"] = inv_before["ロット"].apply(
+            lambda x: _datestr8_to_lot_key(str(x)[:8]) if pd.notna(x) else UNKNOWN_LOT_KEY
+        )
+    
+    # 移動後の状態をシミュレート
+    inv_after = inv_before.copy()
+    
+    # 移動を適用
+    move_map = {}  # (from_loc, sku_id, lot) -> to_loc
+    for m in moves:
+        move_map[(m.from_loc, m.sku_id, m.lot)] = m.to_loc
+    
+    # ロケーションを更新
+    def apply_move(row):
+        key = (str(row["ロケーション"]).zfill(8), str(row["商品ID"]), str(row.get("ロット", "")))
+        if key in move_map:
+            return move_map[key]
+        return row["ロケーション"]
+    
+    inv_after["ロケーション"] = inv_after.apply(apply_move, axis=1)
+    
+    # ロケーション座標をパース
+    def parse_loc(loc_str):
+        loc_str = str(loc_str).zfill(8)
+        if len(loc_str) == 8 and loc_str.isdigit():
+            return int(loc_str[0:3]), int(loc_str[3:6]), int(loc_str[6:8])
+        return 0, 0, 0
+    
+    inv_after["lv_after"], inv_after["col_after"], inv_after["dep_after"] = zip(
+        *inv_after["ロケーション"].apply(parse_loc)
+    )
+    
+    # === 1. FIFO違反チェック ===
+    # 同一SKU内で、古いロットが後から引き当てられる位置にあるかチェック
+    # 引き当て優先度: Lv小 → 列小 → 奥行小
+    
+    move_skus = set(m.sku_id for m in moves)
+    
+    for sku in move_skus:
+        sku_rows = inv_after[inv_after["商品ID"].astype(str) == str(sku)].copy()
+        if len(sku_rows) <= 1:
+            continue
+        
+        # lot_keyでソート（古い順）
+        sku_rows = sku_rows[sku_rows["lot_key"] != UNKNOWN_LOT_KEY]
+        if len(sku_rows) <= 1:
+            continue
+        
+        sku_rows = sku_rows.sort_values("lot_key")
+        
+        # 引き当て優先度キーを計算
+        sku_rows["pick_priority"] = (
+            sku_rows["lv_after"] * 1000000 + 
+            sku_rows["col_after"] * 1000 + 
+            sku_rows["dep_after"]
+        )
+        
+        # 古いロットから順に、引き当て優先度をチェック
+        prev_priority = -1
+        prev_lot_key = -1
+        for idx, row in sku_rows.iterrows():
+            current_priority = row["pick_priority"]
+            current_lot_key = row["lot_key"]
+            
+            if prev_priority > 0 and current_lot_key > prev_lot_key:
+                # 新しいロットなのに、古いロットより優先度が高い（数値が小さい）
+                if current_priority < prev_priority:
+                    validation["fifo_violations"].append({
+                        "sku_id": sku,
+                        "newer_lot_key": current_lot_key,
+                        "newer_loc": row["ロケーション"],
+                        "newer_priority": current_priority,
+                        "older_lot_key": prev_lot_key,
+                        "issue": "新しいロットが古いロットより先に引き当てられる位置にある",
+                    })
+            
+            prev_priority = current_priority
+            prev_lot_key = current_lot_key
+    
+    # === 2. SKU分散チェック ===
+    # 移動前後でロケーション数を比較
+    
+    for sku in move_skus:
+        before_locs = set(
+            inv_before[inv_before["商品ID"].astype(str) == str(sku)]["ロケーション"].astype(str)
+        )
+        after_locs = set(
+            inv_after[inv_after["商品ID"].astype(str) == str(sku)]["ロケーション"].astype(str)
+        )
+        
+        before_count = len(before_locs)
+        after_count = len(after_locs)
+        
+        if after_count > before_count:
+            validation["sku_dispersion_issues"].append({
+                "sku_id": sku,
+                "before_loc_count": before_count,
+                "after_loc_count": after_count,
+                "before_locs": sorted(list(before_locs))[:5],
+                "after_locs": sorted(list(after_locs))[:5],
+                "issue": f"SKUが分散 ({before_count}→{after_count}ロケ)",
+            })
+        elif after_count < before_count:
+            validation["sku_dispersion_improved"].append({
+                "sku_id": sku,
+                "before_loc_count": before_count,
+                "after_loc_count": after_count,
+                "improvement": f"SKUが集約 ({before_count}→{after_count}ロケ)",
+            })
+    
+    # === 総合判定 ===
+    validation["total_issues"] = len(validation["fifo_violations"]) + len(validation["sku_dispersion_issues"])
+    validation["validation_passed"] = validation["total_issues"] == 0
+    
+    return validation
 
 
 def _generate_relocation_summary(
@@ -598,6 +827,35 @@ def _generate_relocation_summary(
     summary["recommendations"] = recommendations
     summary["move_rate_percent"] = round(move_rate, 2)
     
+    # === 移動後検証レポート ===
+    try:
+        validation = _validate_post_move_state(inv_before, moves)
+        summary["post_move_validation"] = validation
+        
+        if validation["fifo_violations"]:
+            recommendations.append(
+                f"⚠️ FIFO違反 {len(validation['fifo_violations'])}件検出 - "
+                "新しいロットが古いロットより先に引き当てられる位置にあります"
+            )
+        if validation["sku_dispersion_issues"]:
+            recommendations.append(
+                f"⚠️ SKU分散悪化 {len(validation['sku_dispersion_issues'])}件 - "
+                "移動後にロケーション数が増えたSKUがあります"
+            )
+        if validation["sku_dispersion_improved"]:
+            recommendations.append(
+                f"✅ SKU集約改善 {len(validation['sku_dispersion_improved'])}件 - "
+                "移動後にロケーション数が減ったSKUがあります"
+            )
+        
+        # 総合判定をサマリーに追加
+        summary["validation_passed"] = validation["validation_passed"]
+        summary["validation_issues_count"] = validation["total_issues"]
+        
+    except Exception as e:
+        print(f"[_generate_relocation_summary] Validation failed: {e}")
+        summary["post_move_validation"] = {"error": str(e)}
+    
     print(f"[_generate_relocation_summary] Completed: keys={list(summary.keys())}")
     return summary
 
@@ -675,9 +933,11 @@ class OptimizerConfig:
     hard_fifo: bool = False           # 「古いロットが下」ルールをハードに守る
     strict_pack: Optional[str] = None # "A", "B", "A+B" を指定可（Noneは従来通り）
     exclude_oversize: bool = False    # 1ケースが棚容積上限を超えるSKUを除外
+    # --- Time limit for main loop (メインループの時間制限) ---
+    loop_time_limit: float = 1800.0   # seconds (30 minutes) - chain_depth=1で全行処理に必要
     # --- Eviction chain (bounded multi-step relocation) ---
-    # デフォルトで浅い連鎖(2)を許可
-    chain_depth: int = 2            # 0=disabled; try 2 to enable shallow chains
+    # chain_depth=1: 浅い連鎖のみ許可（パフォーマンスと効果のバランス）
+    chain_depth: int = 1            # 0=disabled; 1=shallow; 2=deeper chains
     # 既定で控えめに有効化（性能と効果のバランス）
     eviction_budget: int = 50        # max number of eviction (auxiliary) moves
     touch_budget: int = 100          # max number of distinct locations we can touch
@@ -1402,6 +1662,7 @@ def _violates_lot_level_rule(
     tcol: int,
     tdep: int,
     moving_index,
+    inv_rows_by_loc_sku: Optional[Dict] = None,  # OPTIMIZATION: pre-built index
 ) -> bool:
     """同一列(=tcol)に限定して『古いロットほど低段／新しいロットほど高段』を**厳密**に維持する。
     条件:
@@ -1412,7 +1673,12 @@ def _violates_lot_level_rule(
     if not need_cols.issubset(inv.columns):
         return False
 
-    same = inv[(inv["商品ID"].astype(str) == str(sku)) & (inv["col"] == int(tcol))]
+    # OPTIMIZED path: use pre-built column-based index if available
+    # We need inventory rows for this SKU in this column
+    # Since inv_rows_by_loc_sku is by location, we need to check all locations in the column
+    # This is still O(n) worst case, so use DataFrame for now but with .query() for speed
+    
+    same = inv.query("`商品ID` == @sku and col == @tcol")
     if same.empty:
         return False
 
@@ -1428,6 +1694,47 @@ def _violates_lot_level_rule(
         if max_older_lv > target_level:
             return True
 
+    return False
+
+
+def _violates_lot_level_rule_fast(
+    sku: str,
+    lot_key: int,
+    target_level: int,
+    tcol: int,
+    inv_lot_levels_by_sku_col: Dict[Tuple[str, int], List[Tuple[int, int]]],
+) -> bool:
+    """Fast version using pre-built index. Same logic as _violates_lot_level_rule.
+    
+    Rule: 同一列に限定して『古いロットほど低段／新しいロットほど高段』を厳密に維持
+    - 新しいロット（lot_key > current）の最小段 < target_level → 違反
+    - 古いロット（lot_key < current）の最大段 > target_level → 違反
+    """
+    key = (str(sku), int(tcol))
+    lot_levels = inv_lot_levels_by_sku_col.get(key)
+    if not lot_levels:
+        return False
+    
+    # Find min level of newer lots and max level of older lots
+    min_newer_level = None
+    max_older_level = None
+    
+    for other_lot_key, other_level in lot_levels:
+        if other_lot_key > lot_key:
+            # Newer lot
+            if min_newer_level is None or other_level < min_newer_level:
+                min_newer_level = other_level
+        elif other_lot_key < lot_key:
+            # Older lot
+            if max_older_level is None or other_level > max_older_level:
+                max_older_level = other_level
+    
+    # Check violations
+    if min_newer_level is not None and min_newer_level < target_level:
+        return True
+    if max_older_level is not None and max_older_level > target_level:
+        return True
+    
     return False
 
 
@@ -1816,6 +2123,9 @@ def _pass1_pick_storage_balance(
                 except:
                     pass
 
+            # Initialize swap chain tracking
+            _pending_swap_chain_id = None
+
             # --- 2) 空き候補が全く無い場合、同列内スワップを試行
             if best_to is None and enable_swap and swap_budget_left > 0:
                 # 目標段(target_lv)にいる“占有者”のうち、望ましい段に居ない行を優先して退避
@@ -1879,6 +2189,9 @@ def _pass1_pick_storage_balance(
                     if not _can_add(2):
                         best_to = None
                     else:
+                        # Generate chain_group_id for linked moves
+                        swap_chain_id = f"swap_{secrets.token_hex(6)}"
+                        
                         tlv_o, tcol_o, tdep_o = _parse_loc8(best_occ_dest)
                         moves.append(
                             Move(
@@ -1889,6 +2202,8 @@ def _pass1_pick_storage_balance(
                                 to_loc=str(best_occ_dest).zfill(8),
                                 lot_date=_lot_key_to_datestr8(o_lot_key),
                                 reason="スワップ準備退避 → 優先商品用スペース確保",
+                                chain_group_id=swap_chain_id,
+                                execution_order=1,  # First: evacuate occupant
                             )
                         )
                         shelf_usage[o_from] = max(0.0, shelf_usage.get(o_from, 0.0) - o_need_vol)
@@ -1900,6 +2215,8 @@ def _pass1_pick_storage_balance(
                         inv.at[o_idx, "ロケーション"] = best_occ_dest
                         # 2-2) 本行 move（occupant が空けたマスへ＝o_from）
                         best_to = o_from
+                        # Remember chain_group_id for main move
+                        _pending_swap_chain_id = swap_chain_id
                         swap_budget_left -= 1
 
             # スワップしても候補が無ければ、この行は Pass-2 へ委譲
@@ -1999,6 +2316,8 @@ def _pass1_pick_storage_balance(
                     to_loc=str(best_to).zfill(8),
                     lot_date=_lot_key_to_datestr8(lk),
                     reason=move_reason,
+                    chain_group_id=_pending_swap_chain_id,  # Set if this is part of a swap
+                    execution_order=2 if _pending_swap_chain_id else None,  # Second: main move after eviction
                 )
             )
             group_moves += 1
@@ -2180,8 +2499,15 @@ def _find_best_destination_for_row(
         # FIFO strict within same column only: if moving within same column, ensure not violating
         lot_key = int(row.get("lot_key") or UNKNOWN_LOT_KEY)
         if lot_key != UNKNOWN_LOT_KEY and tcol == int(row.get("col") or 0):
-            if _violates_lot_level_rule(inv, str(row["商品ID"]), lot_key, tlv, tcol, tdep, None):
-                continue
+            # OPTIMIZED: Use global index instead of DataFrame filtering
+            inv_lot_levels = _GLOBAL_INV_INDEXES.get("inv_lot_levels_by_sku_col", {})
+            if inv_lot_levels:
+                if _violates_lot_level_rule_fast(str(row["商品ID"]), lot_key, tlv, tcol, inv_lot_levels):
+                    continue
+            else:
+                # Fallback to slow version if index not available
+                if _violates_lot_level_rule(inv, str(row["商品ID"]), lot_key, tlv, tcol, tdep, None):
+                    continue
         # score and pick（空きロケを優先）
         s = _score_destination_for_row(
             row,
@@ -2469,8 +2795,16 @@ def _plan_eviction_chain(
     if budget.depth_left <= 0 or budget.evictions_left <= 0 or budget.touch_left <= 0:
         return None
 
-    # Choose evictable rows in target_loc (prefer newest lot and pack-mismatch)
-    in_rows = inv[inv["ロケーション"].astype(str) == str(target_loc)].copy()
+    # OPTIMIZED: Use global index to get rows at target location instead of DataFrame filtering
+    inv_rows_by_loc = _GLOBAL_INV_INDEXES.get("inv_rows_by_loc", {})
+    row_indices = inv_rows_by_loc.get(str(target_loc), [])
+    if not row_indices:
+        # Fallback to DataFrame filtering if index not available
+        in_rows = inv[inv["ロケーション"].astype(str) == str(target_loc)].copy()
+    else:
+        # Fast path: use pre-built index
+        in_rows = inv.loc[row_indices].copy()
+    
     if in_rows.empty:
         return None
     def _row_sort_key(r: pd.Series) -> Tuple[float, int, int]:
@@ -3162,6 +3496,36 @@ def plan_relocation(
     sample_locs_after = inv["ロケーション"].head(5).tolist()
     print(f"[optimizer] Sample locations after parse: {sample_locs_after}")
     
+    # --- 複数SKU混在ロケーションを除外（移動元・移動先両方から除外）
+    # ロケーションごとのユニークSKU数をカウント
+    sku_count_per_loc = inv.groupby("ロケーション")["商品ID"].nunique()
+    multi_sku_locs = set(sku_count_per_loc[sku_count_per_loc > 1].index)
+    
+    if multi_sku_locs:
+        before_inv_count = len(inv)
+        # 移動元から除外: 複数SKU混在ロケにある在庫は移動しない
+        inv = inv[~inv["ロケーション"].isin(multi_sku_locs)].copy()
+        excluded_inv_count = before_inv_count - len(inv)
+        
+        # 移動先から除外: can_receive_setから複数SKU混在ロケを削除
+        if can_receive_set:
+            before_recv_count = len(can_receive_set)
+            can_receive_set = can_receive_set - multi_sku_locs
+            excluded_recv_count = before_recv_count - len(can_receive_set)
+        else:
+            excluded_recv_count = 0
+        
+        print(f"[optimizer] 複数SKU混在ロケ除外: {len(multi_sku_locs)}ロケ → 移動元から{excluded_inv_count}件除外, 移動先から{excluded_recv_count}ロケ除外")
+        try:
+            _publish_progress(get_current_trace_id(), {
+                "type": "info", "phase": "filter",
+                "message": f"複数SKU混在ロケ除外: {len(multi_sku_locs)}ロケ → 移動元{excluded_inv_count}件, 移動先{excluded_recv_count}ロケ除外"
+            })
+        except Exception:
+            pass
+    else:
+        print("[optimizer] 複数SKU混在ロケなし")
+
     # ベクトル化: apply不使用で高速化
     loc_str = inv["ロケーション"].astype(str).str.zfill(8)
     inv["lv"] = pd.to_numeric(loc_str.str[0:3], errors='coerce').fillna(0).astype(int)
@@ -3436,6 +3800,7 @@ def plan_relocation(
     
     print(f"[optimizer] About to sort {len(all_candidate_moves)} candidates...")
     # 優先度順にソート (Pass優先 → 効果大きい順)
+    # ただし chain_group_id がある移動はグループ単位でまとめて並べる
     try:
         moves_with_meta = []
         for i, m in enumerate(all_candidate_moves):
@@ -3451,8 +3816,72 @@ def plan_relocation(
                 traceback.print_exc()
                 continue
         print(f"[optimizer] Created moves_with_meta with {len(moves_with_meta)} entries, now sorting...")
-        moves_with_meta.sort(key=lambda x: (x[1], -x[2]))  # priority ASC, gain DESC
-        print(f"[optimizer] Sorting complete")
+        
+        # === chain_group_id 対応ソート ===
+        # 1. chain_group_id でグループ化
+        from collections import defaultdict
+        chain_groups: Dict[str, List[Tuple[Move, int, float]]] = defaultdict(list)
+        standalone_moves: List[Tuple[Move, int, float]] = []
+        
+        for m, priority, gain in moves_with_meta:
+            chain_id = getattr(m, 'chain_group_id', None)
+            if chain_id:
+                chain_groups[chain_id].append((m, priority, gain))
+            else:
+                standalone_moves.append((m, priority, gain))
+        
+        # 2. 各グループ内を execution_order でソート
+        for chain_id in chain_groups:
+            chain_groups[chain_id].sort(
+                key=lambda x: (getattr(x[0], 'execution_order', 999) or 999)
+            )
+        
+        # 3. グループの代表優先度・効果を計算（グループ内の最高優先度 & 合計効果）
+        group_meta: List[Tuple[str, int, float, List[Tuple[Move, int, float]]]] = []
+        for chain_id, group_moves in chain_groups.items():
+            group_priority = min(m[1] for m in group_moves)  # 最高優先度（最小値）
+            group_gain = sum(m[2] for m in group_moves)  # 合計効果
+            group_meta.append((chain_id, group_priority, group_gain, group_moves))
+        
+        # 4. グループを優先度→効果順でソート
+        group_meta.sort(key=lambda x: (x[1], -x[2]))  # priority ASC, gain DESC
+        
+        # 5. スタンドアロン移動もソート
+        standalone_moves.sort(key=lambda x: (x[1], -x[2]))  # priority ASC, gain DESC
+        
+        # 6. グループとスタンドアロンを統合（優先度→効果順でマージ）
+        sorted_moves_with_meta: List[Tuple[Move, int, float]] = []
+        group_idx = 0
+        standalone_idx = 0
+        
+        while group_idx < len(group_meta) or standalone_idx < len(standalone_moves):
+            # 次のグループと次のスタンドアロンを比較
+            if group_idx >= len(group_meta):
+                # グループが尽きた -> スタンドアロンを追加
+                sorted_moves_with_meta.append(standalone_moves[standalone_idx])
+                standalone_idx += 1
+            elif standalone_idx >= len(standalone_moves):
+                # スタンドアロンが尽きた -> グループを追加
+                for m_tuple in group_meta[group_idx][3]:
+                    sorted_moves_with_meta.append(m_tuple)
+                group_idx += 1
+            else:
+                # 両方ある -> 優先度と効果で比較
+                g_priority, g_gain = group_meta[group_idx][1], group_meta[group_idx][2]
+                s_priority, s_gain = standalone_moves[standalone_idx][1], standalone_moves[standalone_idx][2]
+                
+                if (g_priority, -g_gain) <= (s_priority, -s_gain):
+                    # グループの方が優先
+                    for m_tuple in group_meta[group_idx][3]:
+                        sorted_moves_with_meta.append(m_tuple)
+                    group_idx += 1
+                else:
+                    # スタンドアロンの方が優先
+                    sorted_moves_with_meta.append(standalone_moves[standalone_idx])
+                    standalone_idx += 1
+        
+        moves_with_meta = sorted_moves_with_meta
+        print(f"[optimizer] Sorting complete (chain_groups={len(chain_groups)}, standalone={len(standalone_moves)})")
     except Exception as e:
         print(f"[optimizer] FATAL ERROR in sorting: {e}")
         import traceback
@@ -3561,6 +3990,60 @@ def plan_relocation(
     for lv in locs_by_level:
         locs_by_level[lv].sort(key=_location_key)
     _log(f"Pre-cached {len(locs_by_level)} levels with locations")
+
+    # ====== PERFORMANCE OPTIMIZATION: Pre-build inventory indexes ======
+    # Build global indexes first (for eviction chain functions)
+    _build_global_inv_indexes(inv)
+    
+    # This avoids repeated DataFrame filtering in the main loop (major bottleneck)
+    _log("Building inventory indexes for fast lookup...")
+    _idx_build_start = time.perf_counter()
+    
+    # Index 1: lots by (location, sku) -> set of lot_keys
+    inv_lots_by_loc_sku: Dict[Tuple[str, str], Set[int]] = {}
+    # Index 2: columns where each (sku, lot_key) exists
+    inv_cols_by_sku_lot: Dict[Tuple[str, int], Set[int]] = {}
+    # Index 3: inventory rows at each location for a SKU (for lot-level rule check)
+    inv_rows_by_loc_sku: Dict[Tuple[str, str], List[Tuple[int, int, int]]] = {}  # list of (lot_key, level, idx)
+    # Index 4: lot_key -> level mapping by (sku, column) for FIFO rule check
+    inv_lot_levels_by_sku_col: Dict[Tuple[str, int], List[Tuple[int, int]]] = {}  # list of (lot_key, level)
+    
+    if "商品ID" in inv.columns and "lot_key" in inv.columns and "ロケーション" in inv.columns:
+        for idx_row in inv.index:
+            try:
+                sku_v = str(inv.at[idx_row, "商品ID"])
+                loc_v = str(inv.at[idx_row, "ロケーション"])
+                lot_k = int(pd.to_numeric(inv.at[idx_row, "lot_key"], errors="coerce") or UNKNOWN_LOT_KEY)
+                col_v = int(inv.at[idx_row, "col"]) if pd.notna(inv.at[idx_row, "col"]) else 0
+                lv_v = int(inv.at[idx_row, "lv"]) if pd.notna(inv.at[idx_row, "lv"]) else 0
+                
+                # Index 1
+                key1 = (loc_v, sku_v)
+                if key1 not in inv_lots_by_loc_sku:
+                    inv_lots_by_loc_sku[key1] = set()
+                inv_lots_by_loc_sku[key1].add(lot_k)
+                
+                # Index 2
+                key2 = (sku_v, lot_k)
+                if key2 not in inv_cols_by_sku_lot:
+                    inv_cols_by_sku_lot[key2] = set()
+                inv_cols_by_sku_lot[key2].add(col_v)
+                
+                # Index 3
+                if key1 not in inv_rows_by_loc_sku:
+                    inv_rows_by_loc_sku[key1] = []
+                inv_rows_by_loc_sku[key1].append((lot_k, lv_v, idx_row))
+                
+                # Index 4: For FIFO rule - lot_key and level by (sku, column)
+                key4 = (sku_v, col_v)
+                if key4 not in inv_lot_levels_by_sku_col:
+                    inv_lot_levels_by_sku_col[key4] = []
+                inv_lot_levels_by_sku_col[key4].append((lot_k, lv_v))
+            except Exception:
+                pass
+    
+    _log(f"Inventory indexes built in {time.perf_counter() - _idx_build_start:.2f}s: {len(inv_lots_by_loc_sku)} loc-sku pairs, {len(inv_cols_by_sku_lot)} sku-lot pairs, {len(inv_lot_levels_by_sku_col)} sku-col pairs")
+    # ====== END PERFORMANCE OPTIMIZATION ======
 
     processed_rows = 0
     total_rows = len(order_idx)
@@ -3763,56 +4246,40 @@ def plan_relocation(
                                     continue
                         except Exception:
                             pass
-                    if _violates_lot_level_rule(inv, sku_val, lot_key, target_level, tcol, tdep, idx):
+                    # OPTIMIZED: Use fast dict-based FIFO check instead of DataFrame filtering
+                    if _violates_lot_level_rule_fast(sku_val, lot_key, target_level, tcol, inv_lot_levels_by_sku_col):
                         row_fail["fifo"] += 1
                         continue
 
                     # Hard rule: 同一SKUで異なるロットは同一ロケーションに置かない
                     # Check both existing inventory AND already planned moves to this location
+                    # OPTIMIZED: Use pre-built index instead of DataFrame filtering
                     try:
                         exists_mixed = False
                         conflicting_lots: Set[int] = set()
                         
-                        # 1) Check existing inventory in target location
-                        if ("商品ID" in inv.columns) and ("lot_key" in inv.columns):
-                            same_loc = inv[(inv["商品ID"].astype(str) == str(sku_val)) & (inv["ロケーション"].astype(str) == str(to_loc))]
-                            if not same_loc.empty:
-                                # lot_key が未知(UNKNOWN)は厳しめに弾く（既存に何かあれば混在とみなす）
-                                if int(lot_key) == UNKNOWN_LOT_KEY:
-                                    exists_mixed = True
-                                else:
-                                    kseries = pd.to_numeric(same_loc.get("lot_key"), errors="coerce").fillna(UNKNOWN_LOT_KEY).astype(int)
-                                    existing_lots = set(kseries.unique())
-                                    conflicting_lots.update(existing_lots)
-                                    # Check if current lot differs from existing lots
-                                    if existing_lots and int(lot_key) not in existing_lots:
-                                        exists_mixed = True
+                        # 1) Check existing inventory in target location (FAST: dict lookup)
+                        loc_sku_key = (str(to_loc), str(sku_val))
+                        existing_lots = inv_lots_by_loc_sku.get(loc_sku_key, set())
+                        if existing_lots:
+                            if int(lot_key) == UNKNOWN_LOT_KEY:
+                                exists_mixed = True
+                            elif int(lot_key) not in existing_lots:
+                                exists_mixed = True
+                                conflicting_lots.update(existing_lots)
                         
                         # 2) Check already planned moves to this location with same SKU
-                        lookup_key = (str(to_loc), str(sku_val))
-                        if lookup_key in planned_lots_by_loc_sku:
-                            planned_lots = planned_lots_by_loc_sku[lookup_key]
+                        if loc_sku_key in planned_lots_by_loc_sku:
+                            planned_lots = planned_lots_by_loc_sku[loc_sku_key]
                             if int(lot_key) == UNKNOWN_LOT_KEY:
-                                # Unknown lot should not mix with any known lots
                                 if planned_lots:
                                     exists_mixed = True
                             elif planned_lots and int(lot_key) not in planned_lots:
-                                # Different lot already planned for this location+SKU
                                 exists_mixed = True
                                 conflicting_lots.update(planned_lots)
                         
                         if exists_mixed:
                             row_fail["forbidden"] += 1
-                            # デバッグドロップに記録（reason: other）
-                            conflict_info = f"existing/planned lots: {sorted(conflicting_lots)}" if conflicting_lots else "lot conflict"
-                            _record_drop("other", {
-                                "sku_id": sku_val,
-                                "lot": str(row.get("ロット") or ""),
-                                "lot_key": int(lot_key),
-                                "from_loc": from_loc,
-                                "to_loc": str(to_loc),
-                                "qty_cases": qty_cases,
-                            }, note=f"forbid mixing lots at same location: {conflict_info}")
                             continue
                     except Exception as e:
                         # 診断は最適化を壊さない
@@ -3871,13 +4338,9 @@ def plan_relocation(
                         cfg=cfg,
                     )
                     # Soft preference: 同一SKU・同一ロットが既に存在する列ならボーナス
+                    # OPTIMIZED: Use pre-built index instead of DataFrame filtering
                     try:
-                        same_lot_cols = set(
-                            inv.loc[
-                                (inv["商品ID"].astype(str) == str(sku_val)) & (pd.to_numeric(inv.get("lot_key"), errors="coerce").fillna(UNKNOWN_LOT_KEY).astype(int) == int(lot_key)),
-                                "col",
-                            ].dropna().astype(int).unique().tolist()
-                        )
+                        same_lot_cols = inv_cols_by_sku_lot.get((str(sku_val), int(lot_key)), set())
                         if int(tcol) in same_lot_cols:
                             score -= float(getattr(cfg, "same_lot_same_column_bonus", 10.0))
                     except Exception:
