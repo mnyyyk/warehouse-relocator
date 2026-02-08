@@ -27,15 +27,19 @@ config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-#
-# Use SQLModel's global metadata so that `alembic revision --autogenerate`
-# can pick up all tables declared under app.models.*
-target_metadata = SQLModel.metadata
+# ---------------------------------------------------------------------------
+# Unified metadata: merge SQLModel tables + plain SQLAlchemy tables
+# (LocationMaster uses SQLAlchemy Base, not SQLModel)
+# ---------------------------------------------------------------------------
+from sqlalchemy import MetaData
+from app.models.location_master import LocationMaster  # noqa: F401
 
-# other values from the config, defined by the needs of env.py,
-# can be acquired:
-# my_important_option = config.get_main_option("my_important_option")
-# ... etc.
+# Create a merged MetaData that contains all tables from both registries
+target_metadata = MetaData()
+for _meta in (SQLModel.metadata, LocationMaster.__table__.metadata):
+    for _tbl in _meta.tables.values():
+        if _tbl.name not in target_metadata.tables:
+            _tbl.to_metadata(target_metadata)
 
 
 def run_migrations_offline() -> None:

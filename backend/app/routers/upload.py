@@ -169,7 +169,9 @@ def _ensure_tables() -> None:
 
 # Auto‑create missing tables only when explicitly enabled.
 # Set environment variable AUTO_CREATE_TABLES=true (default in dev) to allow this.
-# In production (ENV=production), this is DISABLED by default for fast startup.
+# In production (ENV=production), this is DISABLED by default — use Alembic migrations.
+# ⚠️ 本番環境では AUTO_CREATE_TABLES=true を設定しないこと。
+#    entrypoint.sh が alembic upgrade head を実行してスキーマを管理する。
 _is_production = os.getenv("ENV", "").lower() == "production"
 _auto_create = os.getenv("AUTO_CREATE_TABLES", "false" if _is_production else "true")
 if _auto_create.strip().lower() in ("1", "true", "yes", "on", "y", "t"):

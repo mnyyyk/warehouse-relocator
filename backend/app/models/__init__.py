@@ -42,19 +42,16 @@ from .flow import ShipTx, RecvTx  # noqa: F401
 # --- Location Master -------------------------------------------------------
 from .location_master import LocationMaster  # noqa: F401
 
-# --- Metrics & relocation --------------------------------------------------
-# (Add subsequent models here as they are implemented)
-# from .metrics import SkuMetrics  # noqa: F401
-# from .relocation import RelocationJob, RelocationMove  # noqa: F401
+# --- Metrics ---------------------------------------------------------------
+from .metrics import SkuMetric  # noqa: F401
 
 __all__ = [
     "Sku",
     "Inventory",
     "ShipTx",
     "RecvTx",
-    # "SkuMetrics",
-    # "RelocationJob",
-    # "RelocationMove",
+    "LocationMaster",
+    "SkuMetric",
 ]
 
 # --------------------------------------------------------------------------- #
