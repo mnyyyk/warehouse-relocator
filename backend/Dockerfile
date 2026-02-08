@@ -1,4 +1,3 @@
-# syntax=docker/dockerfile:1
 # Backend Dockerfile for FastAPI (Uvicorn) on AWS App Runner
 
 FROM python:3.12-slim
