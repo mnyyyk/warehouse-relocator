@@ -302,5 +302,105 @@ class TestMoveDependencyResolution:
         assert a.chain_group_id.startswith("dep_")
 
 
+    def test_evacuator_after_placer_in_original_order(self):
+        """Bug fix: When evacuator originally appears AFTER placer in the list,
+        the output must reorder them so evacuator comes first.
+
+        Reproduces CSV issue: E8173521(placer, idx=29) → 00202418 but
+        A85A1N22(evacuator, idx=46) from 00202418 was listed AFTER placer.
+        """
+        from app.services.optimizer import _resolve_move_dependencies
+        # Placer at index 0, evacuator at index 2 (after placer)
+        move_standalone = Move(sku_id="X", lot="1", qty=1, from_loc="00900001", to_loc="00900002",
+                               chain_group_id="p1_x", execution_order=1)
+        move_placer = Move(sku_id="E8173521", lot="2", qty=18, from_loc="00402506", to_loc="00202418",
+                           chain_group_id="p1fifo_old", execution_order=1)
+        move_evacuator = Move(sku_id="A85A1N22", lot="3", qty=3, from_loc="00202418", to_loc="00201101",
+                              chain_group_id="p0rebal_old", execution_order=1)
+        # Original order: [standalone, placer, evacuator]
+        result = _resolve_move_dependencies([move_standalone, move_placer, move_evacuator])
+        assert len(result) == 3
+
+        evac = next(m for m in result if m.sku_id == "A85A1N22")
+        plac = next(m for m in result if m.sku_id == "E8173521")
+        # Must share same dep_ chain
+        assert evac.chain_group_id == plac.chain_group_id
+        assert evac.chain_group_id.startswith("dep_")
+        # Evacuator has lower execution_order
+        assert evac.execution_order < plac.execution_order
+        # Evacuator appears BEFORE placer in CSV order
+        evac_pos = result.index(evac)
+        plac_pos = result.index(plac)
+        assert evac_pos < plac_pos, (
+            f"Evacuator must appear before placer in CSV order, "
+            f"but evac_pos={evac_pos}, plac_pos={plac_pos}"
+        )
+
+    def test_all_group_members_get_dep_chain_id(self):
+        """Bug fix: ALL members of a dependency group must get the same dep_
+        chain_group_id, even if one was originally a p1fifo_ standalone.
+
+        Reproduces CSV issue: A83B35A1(p1fifo_) from 00302316 and
+        A3874N12(dep_) → 00302316 had different chain_group_ids.
+        """
+        from app.services.optimizer import _resolve_move_dependencies
+        # Evacuator has a p1fifo_ chain, placer has another
+        move_evac = Move(sku_id="A83B35A1", lot="1", qty=20, from_loc="00302316", to_loc="00100512",
+                         chain_group_id="p1fifo_original", execution_order=1)
+        move_plac = Move(sku_id="A3874N12", lot="2", qty=27, from_loc="00103313", to_loc="00302316",
+                         chain_group_id="p0rebal_original", execution_order=1)
+        result = _resolve_move_dependencies([move_evac, move_plac])
+        assert len(result) == 2
+
+        evac = next(m for m in result if m.sku_id == "A83B35A1")
+        plac = next(m for m in result if m.sku_id == "A3874N12")
+        # BOTH must have the SAME dep_ chain_group_id
+        assert evac.chain_group_id == plac.chain_group_id, (
+            f"Both members must share same chain_group_id, "
+            f"but got evac={evac.chain_group_id}, plac={plac.chain_group_id}"
+        )
+        assert evac.chain_group_id.startswith("dep_")
+
+    def test_evacuator_far_behind_placer_with_many_standalones(self):
+        """Stress test: evacuator is many positions after placer with
+        many standalone moves in between. All must be correctly ordered."""
+        from app.services.optimizer import _resolve_move_dependencies
+        moves = []
+        # 10 standalone moves first
+        for i in range(10):
+            moves.append(Move(sku_id=f"STANDALONE_{i}", lot=str(i), qty=1,
+                              from_loc=f"008{i:05d}", to_loc=f"009{i:05d}",
+                              chain_group_id=f"p1_{i}", execution_order=1))
+        # Placer at index 10
+        moves.append(Move(sku_id="PLACER", lot="P", qty=5,
+                          from_loc="00100001", to_loc="00500001",
+                          chain_group_id="p1_placer", execution_order=1))
+        # 10 more standalones
+        for i in range(10, 20):
+            moves.append(Move(sku_id=f"STANDALONE_{i}", lot=str(i), qty=1,
+                              from_loc=f"008{i:05d}", to_loc=f"009{i:05d}",
+                              chain_group_id=f"p1_{i}", execution_order=1))
+        # Evacuator at index 21 (far behind placer)
+        moves.append(Move(sku_id="EVACUATOR", lot="E", qty=3,
+                          from_loc="00500001", to_loc="00700001",
+                          chain_group_id="p0_evac", execution_order=1))
+
+        result = _resolve_move_dependencies(moves)
+        assert len(result) == 22
+
+        evac = next(m for m in result if m.sku_id == "EVACUATOR")
+        plac = next(m for m in result if m.sku_id == "PLACER")
+        # Same dep_ chain
+        assert evac.chain_group_id == plac.chain_group_id
+        assert evac.chain_group_id.startswith("dep_")
+        # Evacuator before placer in output
+        assert result.index(evac) < result.index(plac)
+        # All 20 standalones preserved with original chain_group_id
+        standalones = [m for m in result if m.sku_id.startswith("STANDALONE_")]
+        assert len(standalones) == 20
+        for s in standalones:
+            assert not s.chain_group_id.startswith("dep_")
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

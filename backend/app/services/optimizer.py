@@ -1048,9 +1048,10 @@ def _resolve_move_dependencies(moves: List[Move]) -> List[Move]:
     remove items FROM location X first, then B must execute before A.
     This function:
       1. Detects to_loc/from_loc conflicts
-      2. Groups dependent moves under the same chain_group_id
+      2. Groups dependent moves under the same chain_group_id (dep_...)
       3. Assigns correct execution_order (evacuate first, then place)
-      4. Reorders the list so dependencies come before dependents
+      4. Reorders the list so that within each group, the evacuator
+         always appears before the placer in the CSV
 
     Returns a new list of Move objects with updated chain_group_id and
     execution_order where dependencies exist.
@@ -1120,8 +1121,7 @@ def _resolve_move_dependencies(moves: List[Move]) -> List[Move]:
 
         group_chain_id = f"dep_{secrets.token_hex(6)}"
 
-        # Topological sort within the group
-        # In-degree based approach
+        # Topological sort within the group (in-degree based / Kahn's)
         in_degree: Dict[int, int] = {idx: 0 for idx in group_indices}
         for idx in group_indices:
             for dep in dep_graph.get(idx, set()):
@@ -1131,7 +1131,6 @@ def _resolve_move_dependencies(moves: List[Move]) -> List[Move]:
         queue = [idx for idx in group_indices if in_degree[idx] == 0]
         topo_order = []
         while queue:
-            # Sort queue for deterministic output
             queue.sort(key=lambda x: x)
             node = queue.pop(0)
             topo_order.append(node)
@@ -1145,7 +1144,7 @@ def _resolve_move_dependencies(moves: List[Move]) -> List[Move]:
         remaining = group_indices - set(topo_order)
         topo_order.extend(sorted(remaining))
 
-        # Assign chain_group_id and execution_order
+        # Assign chain_group_id and execution_order to ALL members
         for exec_order, idx in enumerate(topo_order, start=1):
             old_move = result[idx]
             result[idx] = Move(
@@ -1162,41 +1161,47 @@ def _resolve_move_dependencies(moves: List[Move]) -> List[Move]:
             )
             dep_count += 1
 
-    # Reorder: moves with dependencies should appear in execution order
-    # Build final list: non-dependent moves keep original order,
-    # dependent groups are inserted at the position of the first member
+    # ------------------------------------------------------------------
+    # Reorder: guarantee that within each dependency group the CSV row
+    # order matches execution_order (evacuator rows come before placers).
+    #
+    # Strategy: collect all dep-group member indices, then rebuild the
+    # final list by *replacing* each group block with its topo-sorted
+    # version at the position of the group's earliest original member.
+    # ------------------------------------------------------------------
     dep_indices = set()
-    for g in groups:
+    # Map: original index -> which group id (int) it belongs to
+    idx_to_group: Dict[int, int] = {}
+    for gid, g in enumerate(groups):
         if len(g) >= 2:
             dep_indices.update(g)
+            for idx in g:
+                idx_to_group[idx] = gid
 
-    # Build ordered groups map: first_index -> [ordered indices]
-    group_first: Dict[int, List[int]] = {}
-    for group_indices in groups:
-        if len(group_indices) < 2:
-            continue
-        # Sort by execution_order
-        sorted_group = sorted(group_indices, key=lambda i: result[i].execution_order or 0)
-        first_idx = min(group_indices)
-        group_first[first_idx] = sorted_group
+    # For each group, build execution-order-sorted list of indices
+    group_sorted: Dict[int, List[int]] = {}
+    for gid, g in enumerate(groups):
+        if len(g) >= 2:
+            group_sorted[gid] = sorted(g, key=lambda i: result[i].execution_order or 0)
 
     final_list: List[Move] = []
-    inserted_groups: set = set()
-    for i, m in enumerate(result):
+    emitted_groups: set = set()
+
+    for i in range(len(result)):
         if i in dep_indices:
-            # Check if this is the first member of a group
-            if i in group_first and i not in inserted_groups:
-                # Insert the entire group in order
-                for idx in group_first[i]:
+            gid = idx_to_group[i]
+            if gid not in emitted_groups:
+                # Emit the entire group in execution_order at the
+                # position of its earliest original member
+                for idx in group_sorted[gid]:
                     final_list.append(result[idx])
-                inserted_groups.add(i)
-            # Skip individual members (they're added as part of the group)
-            continue
+                emitted_groups.add(gid)
+            # else: already emitted – skip this member
         else:
-            final_list.append(m)
+            final_list.append(result[i])
 
     if dep_count > 0:
-        print(f"[optimizer] Dependency resolution: {dep_count} moves in {len(groups)} dependency groups")
+        print(f"[optimizer] Dependency resolution: {dep_count} moves in {len([g for g in groups if len(g) >= 2])} dependency groups")
 
     return final_list
 
