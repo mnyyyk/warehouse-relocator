@@ -361,6 +361,103 @@ class TestMoveDependencyResolution:
         )
         assert evac.chain_group_id.startswith("dep_")
 
+    def test_self_referencing_move_no_false_dependency(self):
+        """Bug fix: from_loc == to_loc moves (in-place rearrangement) must NOT
+        create false dependency edges.
+
+        Reproduces CSV issue: A110AH11 from=00101702 to=00101702 (level change)
+        was incorrectly detected as evacuator for any placer targeting 00101702,
+        resulting in spurious single-member dep_ groups with execution_order=2.
+        """
+        from app.services.optimizer import _resolve_move_dependencies
+        # Self-referencing move (same from/to, different level/depth in 8-digit format)
+        move_self = Move(sku_id="A110AH11", lot="1", qty=5, from_loc="00101702", to_loc="00101702",
+                         chain_group_id="p1fifo_self", execution_order=2)
+        # Unrelated standalone move
+        move_other = Move(sku_id="OTHER", lot="2", qty=3, from_loc="00200101", to_loc="00200201",
+                          chain_group_id="p1fifo_other", execution_order=1)
+        result = _resolve_move_dependencies([move_self, move_other])
+        assert len(result) == 2
+
+        self_move = next(m for m in result if m.sku_id == "A110AH11")
+        other_move = next(m for m in result if m.sku_id == "OTHER")
+        # Self-referencing move should NOT get dep_ chain_group_id
+        assert self_move.chain_group_id == "p1fifo_self"
+        # Its execution_order should be preserved (not changed to 1)
+        assert self_move.execution_order == 2
+        # Other move untouched
+        assert other_move.chain_group_id == "p1fifo_other"
+
+    def test_self_referencing_with_real_placer_no_conflict(self):
+        """Self-referencing move at loc X and real placer to loc X should NOT
+        create a dependency because the self-referencing move is NOT an evacuator."""
+        from app.services.optimizer import _resolve_move_dependencies
+        # Self-referencing (from==to)
+        move_self = Move(sku_id="SELF", lot="1", qty=5, from_loc="00100209", to_loc="00100209",
+                         chain_group_id="p1_self", execution_order=3)
+        # Real placer to same location
+        move_placer = Move(sku_id="PLACER", lot="2", qty=3, from_loc="00401717", to_loc="00100209",
+                           chain_group_id="p1_placer", execution_order=2)
+        result = _resolve_move_dependencies([move_self, move_placer])
+        assert len(result) == 2
+
+        self_m = next(m for m in result if m.sku_id == "SELF")
+        plac_m = next(m for m in result if m.sku_id == "PLACER")
+        # No dependency should be created, original chain_group_ids preserved
+        assert self_m.chain_group_id == "p1_self"
+        assert plac_m.chain_group_id == "p1_placer"
+
+    def test_execution_order_always_starts_from_one(self):
+        """Bug fix: execution_order in dependency groups must always start from 1.
+
+        Reproduces CSV issue: dep_53610a98382a had orders=[3, 2] instead of [1, 2].
+        The upstream pass assigned order=3 and order=2, but _resolve_move_dependencies
+        must renumber them starting from 1.
+        """
+        from app.services.optimizer import _resolve_move_dependencies
+        # Evacuator with pre-existing order=3 from upstream
+        move_evac = Move(sku_id="EVAC", lot="1", qty=5, from_loc="00100802", to_loc="00301711",
+                         chain_group_id="p0rebal_old", execution_order=3)
+        # Placer with pre-existing order=2 from upstream
+        move_plac = Move(sku_id="PLAC", lot="2", qty=3, from_loc="00204026", to_loc="00100802",
+                         chain_group_id="p1fifo_old", execution_order=2)
+        result = _resolve_move_dependencies([move_evac, move_plac])
+        assert len(result) == 2
+
+        evac = next(m for m in result if m.sku_id == "EVAC")
+        plac = next(m for m in result if m.sku_id == "PLAC")
+        # execution_order must be 1 and 2 (renumbered from 3 and 2)
+        assert evac.execution_order == 1
+        assert plac.execution_order == 2
+        assert evac.chain_group_id == plac.chain_group_id
+
+    def test_self_ref_and_real_conflict_on_same_location(self):
+        """Complex case: self-referencing move and a real conflict on the same
+        location. The self-ref move should NOT participate in the dep group,
+        but the real pair should be resolved correctly.
+
+        Real CSV pattern:
+        - T291H511: from=00100209, to=00100209 (self, order=3)
+        - A121CN21: from=00401717, to=00100209 (real placer, order=2)
+        """
+        from app.services.optimizer import _resolve_move_dependencies
+        move_self = Move(sku_id="T291H511", lot="1", qty=10, from_loc="00100209", to_loc="00100209",
+                         chain_group_id="p1fifo_t29", execution_order=3)
+        move_placer = Move(sku_id="A121CN21", lot="2", qty=3, from_loc="00401717", to_loc="00100209",
+                           chain_group_id="p1fifo_a12", execution_order=2)
+        result = _resolve_move_dependencies([move_self, move_placer])
+        assert len(result) == 2
+
+        self_m = next(m for m in result if m.sku_id == "T291H511")
+        plac_m = next(m for m in result if m.sku_id == "A121CN21")
+        # Self-referencing move should NOT be grouped with the placer
+        # because from_loc==to_loc is excluded from the evacuator index
+        assert self_m.chain_group_id == "p1fifo_t29"  # unchanged
+        assert plac_m.chain_group_id == "p1fifo_a12"  # unchanged
+        # Original execution_orders preserved
+        assert self_m.execution_order == 3
+        assert plac_m.execution_order == 2
+
     def test_evacuator_far_behind_placer_with_many_standalones(self):
         """Stress test: evacuator is many positions after placer with
         many standalone moves in between. All must be correctly ordered."""

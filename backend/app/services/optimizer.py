@@ -1047,9 +1047,10 @@ def _resolve_move_dependencies(moves: List[Move]) -> List[Move]:
     If Move A wants to place items at location X, but Move B needs to
     remove items FROM location X first, then B must execute before A.
     This function:
-      1. Detects to_loc/from_loc conflicts
+      1. Detects to_loc/from_loc conflicts (skipping self-referencing
+         moves where from_loc == to_loc)
       2. Groups dependent moves under the same chain_group_id (dep_...)
-      3. Assigns correct execution_order (evacuate first, then place)
+      3. Assigns correct execution_order starting from 1 (evacuate first)
       4. Reorders the list so that within each group, the evacuator
          always appears before the placer in the CSV
 
@@ -1068,7 +1069,12 @@ def _resolve_move_dependencies(moves: List[Move]) -> List[Move]:
 
     for i, m in enumerate(moves):
         to_loc_index[m.to_loc].append(i)
-        from_loc_index[m.from_loc].append(i)
+        # Skip self-referencing moves (from_loc == to_loc) from the
+        # evacuator index.  These represent in-place rearrangements
+        # (level/depth changes within the same slot) and must NOT
+        # create dependency edges that would misorder other moves.
+        if m.from_loc != m.to_loc:
+            from_loc_index[m.from_loc].append(i)
 
     # Find dependency pairs: move A wants to_loc X, move B from_loc X
     # B must execute before A
@@ -1116,10 +1122,27 @@ def _resolve_move_dependencies(moves: List[Move]) -> List[Move]:
     dep_count = 0
 
     for group_indices in groups:
-        if len(group_indices) < 2:
-            continue
-
         group_chain_id = f"dep_{secrets.token_hex(6)}"
+
+        if len(group_indices) < 2:
+            # Single-member dependency node: still assign dep_ chain_group_id
+            # and renumber execution_order to 1
+            idx = next(iter(group_indices))
+            old_move = result[idx]
+            result[idx] = Move(
+                sku_id=old_move.sku_id,
+                lot=old_move.lot,
+                qty=old_move.qty,
+                from_loc=old_move.from_loc,
+                to_loc=old_move.to_loc,
+                lot_date=old_move.lot_date,
+                reason=old_move.reason,
+                chain_group_id=group_chain_id,
+                execution_order=1,
+                distance=old_move.distance,
+            )
+            dep_count += 1
+            continue
 
         # Topological sort within the group (in-degree based / Kahn's)
         in_degree: Dict[int, int] = {idx: 0 for idx in group_indices}
@@ -1145,6 +1168,7 @@ def _resolve_move_dependencies(moves: List[Move]) -> List[Move]:
         topo_order.extend(sorted(remaining))
 
         # Assign chain_group_id and execution_order to ALL members
+        # execution_order always starts from 1
         for exec_order, idx in enumerate(topo_order, start=1):
             old_move = result[idx]
             result[idx] = Move(
@@ -1173,16 +1197,14 @@ def _resolve_move_dependencies(moves: List[Move]) -> List[Move]:
     # Map: original index -> which group id (int) it belongs to
     idx_to_group: Dict[int, int] = {}
     for gid, g in enumerate(groups):
-        if len(g) >= 2:
-            dep_indices.update(g)
-            for idx in g:
-                idx_to_group[idx] = gid
+        dep_indices.update(g)
+        for idx in g:
+            idx_to_group[idx] = gid
 
     # For each group, build execution-order-sorted list of indices
     group_sorted: Dict[int, List[int]] = {}
     for gid, g in enumerate(groups):
-        if len(g) >= 2:
-            group_sorted[gid] = sorted(g, key=lambda i: result[i].execution_order or 0)
+        group_sorted[gid] = sorted(g, key=lambda i: result[i].execution_order or 0)
 
     final_list: List[Move] = []
     emitted_groups: set = set()
