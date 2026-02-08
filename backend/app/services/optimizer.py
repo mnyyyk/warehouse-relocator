@@ -1946,6 +1946,8 @@ def _pass_fifo_cross_column(
                 to_loc=str(to_loc).zfill(8),
                 lot_date=lot_date_str,
                 reason=" → ".join(reason_parts),
+                chain_group_id=f"p1fifo_{secrets.token_hex(6)}",
+                execution_order=1,
             ))
             
             # 棚使用量を更新
@@ -2319,8 +2321,8 @@ def _pass1_pick_storage_balance(
                     to_loc=str(best_to).zfill(8),
                     lot_date=_lot_key_to_datestr8(lk),
                     reason=move_reason,
-                    chain_group_id=_pending_swap_chain_id,  # Set if this is part of a swap
-                    execution_order=2 if _pending_swap_chain_id else None,  # Second: main move after eviction
+                    chain_group_id=_pending_swap_chain_id or f"p1main_{secrets.token_hex(6)}",
+                    execution_order=2 if _pending_swap_chain_id else 1,
                 )
             )
             group_moves += 1
@@ -3320,8 +3322,8 @@ def _pass0_area_rebalance(
                 to_loc=str(to_loc).zfill(8),
                 lot_date=_lot_key_to_datestr8(lk),
                 reason=move_reason,
-                chain_group_id=best_ev_chain_group_id,
-                execution_order=main_exec_order,
+                chain_group_id=best_ev_chain_group_id or f"p0rebal_{secrets.token_hex(6)}",
+                execution_order=main_exec_order or 1,
             )
             moves.append(mv)
             # apply state
@@ -4479,8 +4481,8 @@ def plan_relocation(
                 to_loc=str(to_loc).zfill(8),
                 lot_date=_lot_key_to_datestr8(lot_key),
                 reason=move_reason,
-                chain_group_id=main_chain_id,
-                execution_order=main_exec_order,
+                chain_group_id=main_chain_id or f"p2consol_{secrets.token_hex(6)}",
+                execution_order=main_exec_order or 1,
             )
             
             # Track this move for future lot-mixing checks
@@ -4636,6 +4638,8 @@ def plan_relocation(
                         to_loc=str(to_loc).zfill(8),
                         lot_date=_lot_key_to_datestr8(lot_key),
                         reason=move_reason,
+                        chain_group_id=f"p3ai_{secrets.token_hex(6)}",
+                        execution_order=1,
                     )
                     
                     moves.append(move)
