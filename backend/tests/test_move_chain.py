@@ -451,12 +451,41 @@ class TestMoveDependencyResolution:
         self_m = next(m for m in result if m.sku_id == "T291H511")
         plac_m = next(m for m in result if m.sku_id == "A121CN21")
         # Self-referencing move should NOT be grouped with the placer
-        # because from_loc==to_loc is excluded from the evacuator index
+        # because from_loc==to_loc is excluded from both indices
         assert self_m.chain_group_id == "p1fifo_t29"  # unchanged
         assert plac_m.chain_group_id == "p1fifo_a12"  # unchanged
         # Original execution_orders preserved
         assert self_m.execution_order == 3
         assert plac_m.execution_order == 2
+
+    def test_self_ref_not_grouped_with_real_evacuator_from_same_loc(self):
+        """Bug fix: self-ref move at loc X must NOT be grouped with a real
+        evacuator that leaves from the same loc X.
+
+        Real CSV pattern (dep_2d38152d9e6d):
+        - A82E2N62: from=00102505, to=00100511 (real evacuator)
+        - A110EN11: from=00102505, to=00102505 (self-ref, stays in 00102505)
+
+        Previously, A110EN11's to_loc=00102505 matched A82E2N62's from_loc,
+        creating a false dependency where A82E2N62 became an 'evacuator'
+        for A110EN11's 'placement' at 00102505.
+        """
+        from app.services.optimizer import _resolve_move_dependencies
+        move_real_evac = Move(sku_id="A82E2N62", lot="1", qty=5, from_loc="00102505", to_loc="00100511",
+                              chain_group_id="p1fifo_a82", execution_order=1)
+        move_self = Move(sku_id="A110EN11", lot="2", qty=50, from_loc="00102505", to_loc="00102505",
+                         chain_group_id="p1fifo_a11", execution_order=3)
+        result = _resolve_move_dependencies([move_real_evac, move_self])
+        assert len(result) == 2
+
+        real_evac = next(m for m in result if m.sku_id == "A82E2N62")
+        self_ref = next(m for m in result if m.sku_id == "A110EN11")
+        # They should NOT share a dep_ chain_group_id
+        assert real_evac.chain_group_id == "p1fifo_a82"  # unchanged
+        assert self_ref.chain_group_id == "p1fifo_a11"   # unchanged
+        # Original execution_orders preserved
+        assert real_evac.execution_order == 1
+        assert self_ref.execution_order == 3
 
     def test_evacuator_far_behind_placer_with_many_standalones(self):
         """Stress test: evacuator is many positions after placer with

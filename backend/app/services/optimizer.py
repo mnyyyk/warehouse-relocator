@@ -1068,13 +1068,14 @@ def _resolve_move_dependencies(moves: List[Move]) -> List[Move]:
     from_loc_index: Dict[str, List[int]] = defaultdict(list)
 
     for i, m in enumerate(moves):
+        # Skip self-referencing moves (from_loc == to_loc) from BOTH
+        # indices.  These represent in-place rearrangements (level/depth
+        # changes within the same 8-digit slot code) and must NOT create
+        # dependency edges that would misorder other moves.
+        if m.from_loc == m.to_loc:
+            continue
         to_loc_index[m.to_loc].append(i)
-        # Skip self-referencing moves (from_loc == to_loc) from the
-        # evacuator index.  These represent in-place rearrangements
-        # (level/depth changes within the same slot) and must NOT
-        # create dependency edges that would misorder other moves.
-        if m.from_loc != m.to_loc:
-            from_loc_index[m.from_loc].append(i)
+        from_loc_index[m.from_loc].append(i)
 
     # Find dependency pairs: move A wants to_loc X, move B from_loc X
     # B must execute before A
