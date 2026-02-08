@@ -3703,6 +3703,9 @@ def _consolidate_eviction_chains(moves: List[Dict]) -> List[Dict]:
     同一SKU+ロットが複数回移動される場合、最初の移動元と最後の移動先のみを残し、
     中間移動を除去する。
     
+    統合後に from_loc == to_loc （移動不要）となるムーブは除去し、
+    残ったムーブの execution_order を 1 から再番号付けする。
+    
     Args:
         moves: 元の移動リスト（エビクションチェーン含む）
         
@@ -3748,7 +3751,69 @@ def _consolidate_eviction_chains(moves: List[Dict]) -> List[Dict]:
             
             final_moves.append(final_move)
     
-    return final_moves
+    # ------------------------------------------------------------------
+    # Post-consolidation cleanup:
+    # 1. Remove moves where from_loc == to_loc (net zero movement after
+    #    consolidation — the item ends up back where it started)
+    # 2. Renumber execution_order within each chain_group_id from 1
+    # 3. Reorder so that within each chain group the CSV row order
+    #    matches execution_order (evacuators before placers)
+    # ------------------------------------------------------------------
+    
+    # Step 1: Remove self-referencing moves (from_loc == to_loc)
+    before_count = len(final_moves)
+    final_moves = [
+        m for m in final_moves
+        if str(m.get("from_loc", "")).strip() != str(m.get("to_loc", "")).strip()
+    ]
+    removed = before_count - len(final_moves)
+    if removed > 0:
+        import logging
+        logging.getLogger(__name__).info(
+            "consolidation: removed %d self-referencing moves (from_loc == to_loc)", removed
+        )
+    
+    # Step 2: Renumber execution_order within each chain_group_id from 1
+    chain_groups: Dict[str, List[int]] = defaultdict(list)
+    for i, m in enumerate(final_moves):
+        cg = m.get("chain_group_id")
+        if cg:
+            chain_groups[cg].append(i)
+    
+    for cg, indices in chain_groups.items():
+        if len(indices) == 1:
+            # Single-member group: execution_order = 1
+            final_moves[indices[0]]["execution_order"] = 1
+        else:
+            # Multi-member: sort by current execution_order, then renumber from 1
+            indices.sort(key=lambda i: int(final_moves[i].get("execution_order") or 0))
+            for new_order, idx in enumerate(indices, start=1):
+                final_moves[idx]["execution_order"] = new_order
+    
+    # Step 3: Reorder so within each chain group, members appear
+    # consecutively in execution_order sequence
+    reordered: List[Dict] = []
+    emitted_groups: set = set()
+    
+    for i, m in enumerate(final_moves):
+        cg = m.get("chain_group_id")
+        if cg and cg in chain_groups and len(chain_groups[cg]) > 1:
+            if cg not in emitted_groups:
+                # Emit entire group in execution_order sequence at the
+                # position of the earliest original member
+                group_indices = chain_groups[cg]
+                group_indices_sorted = sorted(
+                    group_indices,
+                    key=lambda j: int(final_moves[j].get("execution_order") or 0)
+                )
+                for j in group_indices_sorted:
+                    reordered.append(final_moves[j])
+                emitted_groups.add(cg)
+            # else: already emitted, skip
+        else:
+            reordered.append(m)
+    
+    return reordered
 
 
 @router.post("/relocation/start/final-moves")
