@@ -1265,7 +1265,10 @@ def enforce_constraints(
             from_loc=str(from_loc).zfill(8), 
             to_loc=str(to_loc).zfill(8), 
             lot_date=lot_date_str,
-            reason=move_reason
+            reason=move_reason,
+            chain_group_id=getattr(m, 'chain_group_id', None),
+            execution_order=getattr(m, 'execution_order', None),
+            distance=getattr(m, 'distance', None),
         ))
         shelf_usage[to_loc] = shelf_usage.get(to_loc, 0.0) + add_vol
         shelf_usage[from_loc] = max(0.0, shelf_usage.get(from_loc, 0.0) - add_vol)
@@ -4185,6 +4188,7 @@ def plan_relocation(
         best_choice: Optional[Tuple[str, int, int, int, bool]] = None
         best_score: float = math.inf
         best_ev_chain: List[Move] = []
+        best_ev_chain_group_id: Optional[str] = None
         cur_col = int(col)
         pack_val = row.get("pack_est")
         
@@ -4317,6 +4321,7 @@ def plan_relocation(
                         _log(f"Warning: lot-mixing check failed: {e}")
                         pass
                     candidate_ev_chain: List[Move] = []
+                    candidate_ev_chain_group_id: Optional[str] = None
                     used = float(shelf_usage.get(to_loc, 0.0))
                     limit = cap_by_loc.get(to_loc, cap_limit) if cap_by_loc else cap_limit
                     if used + need_vol > limit:
@@ -4328,6 +4333,9 @@ def plan_relocation(
                                 touch_left=int(getattr(cfg, "touch_budget", 0)),
                                 touched=set([from_loc, to_loc]),
                             )
+                            # Generate chain_group_id for eviction chain
+                            candidate_ev_chain_group_id = f"evict_{secrets.token_hex(6)}"
+                            
                             candidate_ev_chain = _plan_eviction_chain(
                                 need_vol=need_vol,
                                 target_loc=str(to_loc),
@@ -4344,6 +4352,8 @@ def plan_relocation(
                                 hard_pack_A=hard_pack_A,
                                 ease_weight=getattr(cfg, "ease_weight", 0.0001),
                                 cfg=cfg,
+                                chain_group_id=candidate_ev_chain_group_id,
+                                execution_order_start=1,
                             )
                             if candidate_ev_chain is None:
                                 row_fail["capacity"] += 1
@@ -4381,6 +4391,7 @@ def plan_relocation(
                         best_score = score
                         best_choice = (to_loc, target_level, tcol, tdep, area_needs_mix)
                         best_ev_chain = candidate_ev_chain
+                        best_ev_chain_group_id = candidate_ev_chain_group_id
         
         # If we found a best choice, create the move
         if best_choice is not None:
@@ -4456,6 +4467,10 @@ def plan_relocation(
             move_reason = " & ".join(actions) + " → " + "、".join(improvements)
             
             # Create the main move
+            # Set chain_group_id/execution_order if eviction chain was used
+            main_chain_id = best_ev_chain_group_id if best_ev_chain else None
+            main_exec_order = len(best_ev_chain) + 1 if main_chain_id else None
+            
             move = Move(
                 sku_id=sku_val,
                 lot=str(row.get("ロット") or ""),
@@ -4464,6 +4479,8 @@ def plan_relocation(
                 to_loc=str(to_loc).zfill(8),
                 lot_date=_lot_key_to_datestr8(lot_key),
                 reason=move_reason,
+                chain_group_id=main_chain_id,
+                execution_order=main_exec_order,
             )
             
             # Track this move for future lot-mixing checks
