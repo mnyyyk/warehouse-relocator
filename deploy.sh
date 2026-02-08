@@ -108,6 +108,26 @@ else
     echo -e "${YELLOW}Note: Could not retrieve App Runner status. Check AWS Console.${NC}"
 fi
 
+# ECS Celery ワーカーの再デプロイ
+echo ""
+echo -e "${YELLOW}Forcing ECS Celery worker redeployment...${NC}"
+ECS_CLUSTER="warehouse-optimizer-celery"
+ECS_SERVICE="warehouse-optimizer-celery-worker"
+
+ECS_UPDATE=$(aws ecs update-service \
+    --cluster ${ECS_CLUSTER} \
+    --service ${ECS_SERVICE} \
+    --force-new-deployment \
+    --region ${AWS_REGION} \
+    --query 'service.status' \
+    --output text 2>/dev/null || echo "FAILED")
+
+if [ "$ECS_UPDATE" = "ACTIVE" ]; then
+    echo -e "${GREEN}✓ ECS Celery worker redeployment triggered${NC}"
+else
+    echo -e "${YELLOW}Warning: ECS Celery worker redeployment returned: ${ECS_UPDATE}${NC}"
+fi
+
 echo ""
 echo -e "${GREEN}=== Deployment Complete ===${NC}"
 echo ""
