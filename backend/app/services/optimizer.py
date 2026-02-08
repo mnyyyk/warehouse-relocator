@@ -1036,6 +1036,171 @@ def _compute_rep_pack_by_col_for_inv(inv: pd.DataFrame, pack_map: Optional[pd.Se
             rep_pack_by_col[c] = float(med)
     return rep_pack_by_col
 
+
+# ---------------------------------------------------------------------------
+# Post-processing: resolve move dependencies (to_loc/from_loc conflicts)
+# ---------------------------------------------------------------------------
+
+def _resolve_move_dependencies(moves: List[Move]) -> List[Move]:
+    """Resolve execution order dependencies between moves.
+
+    If Move A wants to place items at location X, but Move B needs to
+    remove items FROM location X first, then B must execute before A.
+    This function:
+      1. Detects to_loc/from_loc conflicts
+      2. Groups dependent moves under the same chain_group_id
+      3. Assigns correct execution_order (evacuate first, then place)
+      4. Reorders the list so dependencies come before dependents
+
+    Returns a new list of Move objects with updated chain_group_id and
+    execution_order where dependencies exist.
+    """
+    if not moves:
+        return moves
+
+    from collections import defaultdict
+
+    # Build index: to_loc -> list of move indices that want to place there
+    to_loc_index: Dict[str, List[int]] = defaultdict(list)
+    # Build index: from_loc -> list of move indices that evacuate from there
+    from_loc_index: Dict[str, List[int]] = defaultdict(list)
+
+    for i, m in enumerate(moves):
+        to_loc_index[m.to_loc].append(i)
+        from_loc_index[m.from_loc].append(i)
+
+    # Find dependency pairs: move A wants to_loc X, move B from_loc X
+    # B must execute before A
+    # dep_graph[i] = set of indices that must execute BEFORE move i
+    dep_graph: Dict[int, set] = defaultdict(set)
+    # reverse: who depends on me
+    reverse_deps: Dict[int, set] = defaultdict(set)
+
+    for loc, placers in to_loc_index.items():
+        evacuators = from_loc_index.get(loc, [])
+        for placer_idx in placers:
+            for evac_idx in evacuators:
+                if placer_idx != evac_idx:
+                    # evac must happen before placer
+                    dep_graph[placer_idx].add(evac_idx)
+                    reverse_deps[evac_idx].add(placer_idx)
+
+    if not dep_graph:
+        # No conflicts found
+        return moves
+
+    # Group connected components (transitive dependencies)
+    visited = set()
+    groups: List[set] = []
+
+    def _dfs(node: int, group: set):
+        if node in visited:
+            return
+        visited.add(node)
+        group.add(node)
+        for dep in dep_graph.get(node, set()):
+            _dfs(dep, group)
+        for dependent in reverse_deps.get(node, set()):
+            _dfs(dependent, group)
+
+    all_dep_nodes = set(dep_graph.keys()) | set(reverse_deps.keys())
+    for node in all_dep_nodes:
+        if node not in visited:
+            group: set = set()
+            _dfs(node, group)
+            groups.append(group)
+
+    # For each group, assign shared chain_group_id and topological order
+    result = list(moves)  # copy
+    dep_count = 0
+
+    for group_indices in groups:
+        if len(group_indices) < 2:
+            continue
+
+        group_chain_id = f"dep_{secrets.token_hex(6)}"
+
+        # Topological sort within the group
+        # In-degree based approach
+        in_degree: Dict[int, int] = {idx: 0 for idx in group_indices}
+        for idx in group_indices:
+            for dep in dep_graph.get(idx, set()):
+                if dep in group_indices:
+                    in_degree[idx] = in_degree.get(idx, 0) + 1
+
+        queue = [idx for idx in group_indices if in_degree[idx] == 0]
+        topo_order = []
+        while queue:
+            # Sort queue for deterministic output
+            queue.sort(key=lambda x: x)
+            node = queue.pop(0)
+            topo_order.append(node)
+            for dependent in reverse_deps.get(node, set()):
+                if dependent in group_indices:
+                    in_degree[dependent] -= 1
+                    if in_degree[dependent] == 0:
+                        queue.append(dependent)
+
+        # Handle cycles (shouldn't happen, but safety)
+        remaining = group_indices - set(topo_order)
+        topo_order.extend(sorted(remaining))
+
+        # Assign chain_group_id and execution_order
+        for exec_order, idx in enumerate(topo_order, start=1):
+            old_move = result[idx]
+            result[idx] = Move(
+                sku_id=old_move.sku_id,
+                lot=old_move.lot,
+                qty=old_move.qty,
+                from_loc=old_move.from_loc,
+                to_loc=old_move.to_loc,
+                lot_date=old_move.lot_date,
+                reason=old_move.reason,
+                chain_group_id=group_chain_id,
+                execution_order=exec_order,
+                distance=old_move.distance,
+            )
+            dep_count += 1
+
+    # Reorder: moves with dependencies should appear in execution order
+    # Build final list: non-dependent moves keep original order,
+    # dependent groups are inserted at the position of the first member
+    dep_indices = set()
+    for g in groups:
+        if len(g) >= 2:
+            dep_indices.update(g)
+
+    # Build ordered groups map: first_index -> [ordered indices]
+    group_first: Dict[int, List[int]] = {}
+    for group_indices in groups:
+        if len(group_indices) < 2:
+            continue
+        # Sort by execution_order
+        sorted_group = sorted(group_indices, key=lambda i: result[i].execution_order or 0)
+        first_idx = min(group_indices)
+        group_first[first_idx] = sorted_group
+
+    final_list: List[Move] = []
+    inserted_groups: set = set()
+    for i, m in enumerate(result):
+        if i in dep_indices:
+            # Check if this is the first member of a group
+            if i in group_first and i not in inserted_groups:
+                # Insert the entire group in order
+                for idx in group_first[i]:
+                    final_list.append(result[idx])
+                inserted_groups.add(i)
+            # Skip individual members (they're added as part of the group)
+            continue
+        else:
+            final_list.append(m)
+
+    if dep_count > 0:
+        print(f"[optimizer] Dependency resolution: {dep_count} moves in {len(groups)} dependency groups")
+
+    return final_list
+
+
 def enforce_constraints(
     sku_master: pd.DataFrame,
     inventory: pd.DataFrame,
@@ -4701,6 +4866,15 @@ def plan_relocation(
             loc_master=lm_df,
         )
         print(f"[optimizer] enforce_constraints completed: {len(accepted)} accepted out of {len(moves)}")
+        
+        # Resolve move dependencies (to_loc/from_loc conflicts)
+        try:
+            accepted = _resolve_move_dependencies(accepted)
+            print(f"[optimizer] Dependency resolution completed: {len(accepted)} moves")
+        except Exception as e:
+            print(f"[optimizer] WARNING: Dependency resolution failed: {e}")
+            import traceback
+            traceback.print_exc()
         
         # Generate comprehensive summary report
         rejected_count = len(moves) - len(accepted)

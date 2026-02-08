@@ -217,5 +217,90 @@ class TestSwapChainGeneration:
         assert len(chain_id) == 5 + 12  # "swap_" + 12 hex chars
 
 
+class TestMoveDependencyResolution:
+    """Test _resolve_move_dependencies for to_loc/from_loc conflict resolution."""
+
+    def test_no_conflicts(self):
+        """No dependency conflicts: moves should stay unchanged."""
+        from app.services.optimizer import _resolve_move_dependencies
+        moves = [
+            Move(sku_id="A", lot="1", qty=5, from_loc="00100101", to_loc="00200201",
+                 chain_group_id="p1fifo_aaa", execution_order=1),
+            Move(sku_id="B", lot="2", qty=3, from_loc="00300301", to_loc="00400401",
+                 chain_group_id="p1fifo_bbb", execution_order=1),
+        ]
+        result = _resolve_move_dependencies(moves)
+        assert len(result) == 2
+        # Original chain_group_ids preserved (no conflict)
+        assert result[0].chain_group_id == "p1fifo_aaa"
+        assert result[1].chain_group_id == "p1fifo_bbb"
+
+    def test_simple_conflict(self):
+        """Move A wants to place at loc X, Move B evacuates from loc X → B first."""
+        from app.services.optimizer import _resolve_move_dependencies
+        # A → to 00100802 ; B ← from 00100802
+        move_a = Move(sku_id="D2040111", lot="1", qty=5, from_loc="00204026", to_loc="00100802",
+                      chain_group_id="p1fifo_aaa", execution_order=1)
+        move_b = Move(sku_id="D1200N11", lot="2", qty=13, from_loc="00100802", to_loc="00302010",
+                      chain_group_id="p0rebal_bbb", execution_order=1)
+        result = _resolve_move_dependencies([move_a, move_b])
+        assert len(result) == 2
+        # Both should share the same dependency chain_group_id
+        assert result[0].chain_group_id == result[1].chain_group_id
+        assert result[0].chain_group_id.startswith("dep_")
+        # B (evacuator) should have lower execution_order than A (placer)
+        b_result = next(m for m in result if m.sku_id == "D1200N11")
+        a_result = next(m for m in result if m.sku_id == "D2040111")
+        assert b_result.execution_order < a_result.execution_order
+        # B should appear before A in the list
+        b_idx = result.index(b_result)
+        a_idx = result.index(a_result)
+        assert b_idx < a_idx
+
+    def test_chain_of_three(self):
+        """A→X, B from X→Y, C from Y→Z: C first, then B, then A."""
+        from app.services.optimizer import _resolve_move_dependencies
+        move_a = Move(sku_id="A", lot="1", qty=5, from_loc="00000001", to_loc="00000010",
+                      chain_group_id="x1", execution_order=1)
+        move_b = Move(sku_id="B", lot="2", qty=3, from_loc="00000010", to_loc="00000020",
+                      chain_group_id="x2", execution_order=1)
+        move_c = Move(sku_id="C", lot="3", qty=2, from_loc="00000020", to_loc="00000030",
+                      chain_group_id="x3", execution_order=1)
+        result = _resolve_move_dependencies([move_a, move_b, move_c])
+        assert len(result) == 3
+        # All share the same chain_group_id
+        assert result[0].chain_group_id == result[1].chain_group_id == result[2].chain_group_id
+        # Order: C, B, A
+        assert result[0].sku_id == "C"
+        assert result[1].sku_id == "B"
+        assert result[2].sku_id == "A"
+        assert result[0].execution_order < result[1].execution_order < result[2].execution_order
+
+    def test_empty_moves(self):
+        """Empty input should return empty."""
+        from app.services.optimizer import _resolve_move_dependencies
+        assert _resolve_move_dependencies([]) == []
+
+    def test_mixed_conflict_and_standalone(self):
+        """Some moves conflict, others are standalone - standalone kept intact."""
+        from app.services.optimizer import _resolve_move_dependencies
+        move_a = Move(sku_id="A", lot="1", qty=5, from_loc="00000001", to_loc="00000010",
+                      chain_group_id="p1_a", execution_order=1)
+        move_b = Move(sku_id="B", lot="2", qty=3, from_loc="00000010", to_loc="00000020",
+                      chain_group_id="p1_b", execution_order=1)
+        move_standalone = Move(sku_id="S", lot="3", qty=8, from_loc="00099001", to_loc="00099002",
+                               chain_group_id="p1_s", execution_order=1)
+        result = _resolve_move_dependencies([move_a, move_b, move_standalone])
+        assert len(result) == 3
+        # Standalone keeps its original chain_group_id
+        s = next(m for m in result if m.sku_id == "S")
+        assert s.chain_group_id == "p1_s"
+        # Conflicting pair shares a dep_ chain_group_id
+        a = next(m for m in result if m.sku_id == "A")
+        b = next(m for m in result if m.sku_id == "B")
+        assert a.chain_group_id == b.chain_group_id
+        assert a.chain_group_id.startswith("dep_")
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
