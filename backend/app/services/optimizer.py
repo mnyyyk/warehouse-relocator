@@ -965,7 +965,7 @@ class OptimizerConfig:
     # --- SKU per-location limit (作業負荷軽減) ---
     # 1SKUあたりの移動元ロケーション数の上限（None=無制限）
     # 最も古いロットのロケーションを優先的に選択
-    max_source_locs_per_sku: Optional[int] = 2
+    max_source_locs_per_sku: Optional[int] = 5
     
 # -------------------------------
 # Additional helpers for hard constraints and pack clustering

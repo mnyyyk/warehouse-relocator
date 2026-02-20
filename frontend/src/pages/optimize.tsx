@@ -335,8 +335,8 @@ const OptimizePage: NextPage & { pageTitle?: string } = () => {
     return Number.isFinite(n) && n > 0 ? n : undefined; // 0/無効/空欄 → 未指定
   }, [maxMovesInput]);
 
-  // SKU移動元ロケーション数制限（デフォルト: 2）
-  const [maxSourceLocsInput, setMaxSourceLocsInput] = useState<string>('2');
+  // SKU移動元ロケーション数制限（デフォルト: 5）
+  const [maxSourceLocsInput, setMaxSourceLocsInput] = useState<string>('5');
   const maxSourceLocsPerSku = useMemo(() => {
     if (maxSourceLocsInput === '') return undefined; // 空欄=無制限
     const n = parseInt(maxSourceLocsInput, 10);
