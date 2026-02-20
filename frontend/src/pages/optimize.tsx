@@ -951,28 +951,8 @@ const OptimizePage: NextPage & { pageTitle?: string } = () => {
 
     setRelocating(true);
     try {
-      const payload = {
-        max_moves: maxMoves,
-        fill_rate: fillRate,
-        block_codes: blocks,
-        quality_names: qualities,
-        use_ai: useAiMain,
-        chain_depth: chainDepth,
-        eviction_budget: evictionBudget,
-        touch_budget: touchBudget,
-      };
-
-      console.log('最終移動API呼び出し中...', payload);
-      let json: any;
-      try {
-        const result = await postWithFallback('/v1/upload/relocation/start/final-moves', payload);
-        json = result.json;
-      } catch (apiError) {
-        console.warn('API呼び出しに失敗、既存データから統合処理を実行:', apiError);
-        
-        // 既存の移動データから統合処理を実行
-        json = consolidateMovesLocally(moves);
-      }
+      // 既存の移動データからクライアントサイドで統合処理（APIの再実行不要）
+      const json = consolidateMovesLocally(moves);
       
       if (!json.moves || !Array.isArray(json.moves)) {
         throw new Error('無効な応答データです');
