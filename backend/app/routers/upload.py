@@ -64,6 +64,7 @@ from pydantic import BaseModel
 from app.services.metrics import recompute_all_sku_metrics
 from app.services.optimizer import (
     plan_relocation,
+    score_all_inventory,
     OptimizerConfig,
     get_last_rejection_debug,
     get_last_relocation_debug,
@@ -1086,6 +1087,50 @@ def _safe_date(val):
 
 # column aliases
 # col = lambda *names: next((row.get(n) for n in names if n in row), None)
+def _filter_sku_df_case_only(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    SKUマスタCSVから梱包形態=バラ行を除外し、ケース行のみを残す。
+
+    - 梱包形態名列がない場合: そのまま全行を返す（変更なし）
+    - 同一SKUにケースとバラが両方ある場合: ケース行のみを使用
+    - ケース行がなくバラ行しかないSKU: バラ行をフォールバックとして使用
+
+    これにより入数=1（バラ単位）ではなく、ケース当たりの正しい入数が使われる。
+    """
+    sku_col = None
+    for c in ("商品ID", "商品ＩＤ", "SKU", "sku", "item_internalid"):
+        if c in df.columns:
+            sku_col = c
+            break
+
+    pack_col = None
+    for c in ("梱包形態名", "梱包形態", "carton_type"):
+        if c in df.columns:
+            pack_col = c
+            break
+
+    if pack_col is None or sku_col is None:
+        return df  # フィルタ不可: そのまま返す
+
+    # ケース行とバラ行に分割（それ以外の梱包形態は保持）
+    is_bara = df[pack_col].astype(str).str.strip().isin(["バラ", "bara", "BARA"])
+    is_case = df[pack_col].astype(str).str.strip().isin(["ケース", "case", "CASE", "ケース（外）"])
+
+    # ケース行のSKU一覧
+    skus_with_case = set(df.loc[is_case, sku_col].astype(str).str.strip())
+
+    # バラ行のうちケース行がないSKUのみ残す（フォールバック）
+    bara_fallback = df[is_bara & ~df[sku_col].astype(str).str.strip().isin(skus_with_case)]
+
+    # ケース行 + バラフォールバック + それ以外
+    others = df[~is_bara & ~is_case]
+    result = pd.concat([df[is_case], bara_fallback, others], ignore_index=True)
+
+    bara_excluded = is_bara.sum() - len(bara_fallback)
+    print(f"[_filter_sku_df_case_only] バラ除外={bara_excluded}件 バラfallback={len(bara_fallback)}件 ケース={is_case.sum()}件")
+    return result
+
+
 def _sku_mapper(row: pd.Series) -> Sku:
     sku_code = _col(
         row,
@@ -1909,7 +1954,12 @@ async def upload_sku(file: UploadDep, ses: SesDep):
         except Exception:
             pass
         print(f"[PERF] upload_sku truncate: {(t2 - t1):.3f}s")
-        # 3) 挿入
+        # 3) 梱包形態フィルタ: バラ行を除外してケース行を優先
+        #    同一SKUにケースとバラが両方ある場合、ケースの入数を使う
+        #    梱包形態名列がない場合はそのまま全行を使う
+        df = _filter_sku_df_case_only(df)
+        print(f"[upload_sku] 梱包形態フィルタ後: {len(df)} 行")
+        # 4) 挿入
         summary = _generic_insert(df, Sku, _sku_mapper, ses, use_upsert=False)
         t3 = perf_counter()
         try:
@@ -2847,6 +2897,86 @@ def relocation_last_debug(trace_id: Optional[str] = None):
         # キャッシュされた移動データ（タイムアウトリカバリ用）
         "moves": cached_moves,
     }
+
+
+@router.post("/relocation/score-preview")
+def relocation_score_preview(
+    req: RelocationStartRequest,
+    session: Session = Depends(get_session),
+):
+    """
+    全在庫をスコアリングして現状の課題を可視化する（移動指示は生成しない）。
+
+    課題の種別:
+      - fifo_issue: 最古ロット(lot_rank=1)が取り口（段1-2）にない
+      - swap_needed: 取り口にいるが最古ロットではない（同SKUの最古が保管にある）
+      - packband_issue: 入数帯エリア（列ゾーン）が間違っている
+
+    Returns:
+        summary: 問題件数の集計
+        inventory_scores: 在庫ごとのスコア・課題フラグ（total_issue_score降順）
+    """
+    cfg = OptimizerConfig()
+    for _k in (
+        "fill_rate",
+        "pack_low_max",
+        "pack_high_min",
+        "band_pref_weight",
+        "depth_preference",
+        "center_depth_weight",
+    ):
+        _v = getattr(req, _k, None)
+        if _v is not None:
+            setattr(cfg, _k, _v)
+    try:
+        if getattr(req, "near_cols", None):
+            setattr(cfg, "near_cols", tuple(int(x) for x in req.near_cols))
+        if getattr(req, "far_cols", None):
+            setattr(cfg, "far_cols", tuple(int(x) for x in req.far_cols))
+        if getattr(req, "promo_quality_keywords", None):
+            setattr(cfg, "promo_quality_keywords", tuple(str(x) for x in req.promo_quality_keywords))
+    except Exception:
+        pass
+
+    # DB からデータ取得
+    sku_df = _df_from_sku(session)
+    inv_df = _df_from_inventory(session)
+
+    # ロケマスタ取得
+    try:
+        lm_rows = session.exec(_sa_select(
+            LocationMaster.block_code,
+            LocationMaster.quality_name,
+            LocationMaster.level,
+            LocationMaster.column,
+            LocationMaster.depth,
+            LocationMaster.numeric_id,
+            LocationMaster.display_code,
+            LocationMaster.can_receive,
+            LocationMaster.highness,
+            LocationMaster.capacity_m3,
+        )).all()
+        loc_master_df: Optional[pd.DataFrame] = pd.DataFrame(lm_rows, columns=[
+            "block_code", "quality_name", "level", "column", "depth",
+            "numeric_id", "display_code", "can_receive", "highness", "capacity_m3",
+        ])
+    except Exception:
+        loc_master_df = None
+
+    result = score_all_inventory(
+        sku_df,
+        inv_df,
+        cfg=cfg,
+        loc_master=loc_master_df,
+        block_filter=req.block_codes,
+        quality_filter=req.quality_names,
+    )
+
+    return {
+        "summary": result["summary"],
+        "inventory_scores": result["inventory_scores"],
+    }
+
 
 def _df_from_sku(session: Session) -> pd.DataFrame:
     rows = session.exec(

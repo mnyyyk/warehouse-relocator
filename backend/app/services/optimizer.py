@@ -1305,46 +1305,6 @@ def enforce_constraints(
     except Exception:
         depths_by_col_calc = None
 
-    # --- 列ごとの最大奥行きと中心値（山形用）
-    depths_by_col_calc: Dict[int, Tuple[int, float]] | None = None
-    try:
-        if getattr(cfg, "depth_preference", "front") == "center":
-            depths_by_col_calc = {}
-            if not inv.empty:
-                max_dep_by_col = inv.groupby("col")["dep"].max()
-                for c, m in max_dep_by_col.items():
-                    c_int = int(c)
-                    max_dep = int(m)
-                    if max_dep <= 0:
-                        continue
-                    if max_dep % 2 == 1:
-                        center = (max_dep + 1) / 2.0
-                    else:
-                        center = (max_dep / 2.0 + (max_dep / 2.0 + 1.0)) / 2.0
-                    depths_by_col_calc[c_int] = (max_dep, float(center))
-    except Exception:
-        depths_by_col_calc = None
-
-    # --- 列ごとの最大奥行きと中心値（山形用）
-    depths_by_col_calc: Dict[int, Tuple[int, float]] | None = None
-    try:
-        if getattr(cfg, "depth_preference", "front") == "center":
-            depths_by_col_calc = {}
-            if not inv.empty:
-                max_dep_by_col = inv.groupby("col")["dep"].max()
-                for c, m in max_dep_by_col.items():
-                    c_int = int(c)
-                    max_dep = int(m)
-                    if max_dep <= 0:
-                        continue
-                    if max_dep % 2 == 1:
-                        center = (max_dep + 1) / 2.0
-                    else:
-                        center = (max_dep / 2.0 + (max_dep / 2.0 + 1.0)) / 2.0
-                    depths_by_col_calc[c_int] = (max_dep, float(center))
-    except Exception:
-        depths_by_col_calc = None
-
     # 代表入数(列)
     rep_pack_by_col = _compute_rep_pack_by_col_for_inv(inv, pack_map, getattr(cfg, "preserve_pack_mapping_threshold", 0.7))
 
@@ -1372,6 +1332,12 @@ def enforce_constraints(
 
     accepted: List[Move] = []
     sim_inv = inv[["商品ID", "lot_key", "lv", "col", "dep", "ロケーション"]].copy()
+
+    # Fix2: ロット混在チェック用インデックス (loc, sku) → Set[lot_key]
+    # enforce_constraints でも plan_relocation と同様の混在防止を適用する
+    _sim_lots_by_loc_sku: Dict[Tuple[str, str], Set[int]] = {}
+    for (_loc, _sku_id), _grp in sim_inv.groupby(["ロケーション", "商品ID"]):
+        _sim_lots_by_loc_sku[(str(_loc), str(_sku_id))] = set(int(x) for x in _grp["lot_key"].tolist())
 
     processed = 0
     step = max(1, len(moves) // 20) if moves else 1
@@ -1410,6 +1376,18 @@ def enforce_constraints(
         if cfg.hard_cap and (used_to + add_vol > limit_to):
             _dbg_reject("capacity", _mctx, note=f"used={used_to:.3f}, limit={limit_to:.3f}, add={add_vol:.3f}")
             continue
+
+        # 2.5) Fix2: ロット混在ゲート —— 同一SKU・異なるロットが同一ロケに混在するのを防ぐ
+        _lsk = (to_loc, sku)
+        _existing_ec_lots = _sim_lots_by_loc_sku.get(_lsk, set())
+        if _existing_ec_lots:
+            if int(lot_key) == UNKNOWN_LOT_KEY:
+                _dbg_reject("lot_mix", _mctx, note="unknown lot cannot share location")
+                continue
+            _known_ec_lots = _existing_ec_lots - {UNKNOWN_LOT_KEY}
+            if _known_ec_lots and int(lot_key) not in _known_ec_lots:
+                _dbg_reject("lot_mix", _mctx, note=f"lot_key={lot_key} conflicts with {_known_ec_lots}")
+                continue
 
         # 3) FIFO strict (same column)
         if cfg.hard_fifo:
@@ -1468,6 +1446,12 @@ def enforce_constraints(
 
         new_row = {"商品ID": sku, "lot_key": lot_key, "lv": tlv, "col": tcol, "dep": tdep, "ロケーション": to_loc}
         sim_inv = pd.concat([sim_inv, pd.DataFrame([new_row])], ignore_index=True)
+        # Fix2: _sim_lots_by_loc_sku を逐次更新（移動先に追加、移動元から削除）
+        _to_key = (to_loc, sku)
+        _from_key = (from_loc, sku)
+        _sim_lots_by_loc_sku.setdefault(_to_key, set()).add(int(lot_key))
+        if _from_key in _sim_lots_by_loc_sku:
+            _sim_lots_by_loc_sku[_from_key].discard(int(lot_key))
 
         # periodic progress
         processed += 1
@@ -2193,12 +2177,6 @@ def _pass1_pick_storage_balance(
         print("[Pass-1] inv is empty, returning 0 moves")
         return moves
 
-    # Debug: Check lot_key status
-    total_rows = len(inv)
-    has_volume = len(inv[inv["volume_each_case"] > 0])
-    has_lot = len(inv[inv["lot_key"] != UNKNOWN_LOT_KEY])
-    print(f"[Pass-1] total={total_rows}, has_volume={has_volume}, has_lot={has_lot}, unknown_lot_key={UNKNOWN_LOT_KEY}")
-    
     # 有効な在庫のみ（容積あり、ロット日付あり、移動対象）
     # is_movable: バラのみ or 2ケース以下+バラ混在 は除外済み
     filter_cond = (inv["volume_each_case"] > 0) & (inv["lot_key"] != UNKNOWN_LOT_KEY)
@@ -2206,9 +2184,7 @@ def _pass1_pick_storage_balance(
         filter_cond = filter_cond & (inv["is_movable"] == True)
     subset = inv[filter_cond].copy()
     if subset.empty:
-        print(f"[Pass-1] subset is empty after filtering (needs volume>0 AND lot_key!={UNKNOWN_LOT_KEY})")
         return moves
-    print(f"[Pass-1] subset size after filter: {len(subset)}")
 
     pick_levels = [int(x) for x in getattr(cfg, "pick_levels", (1, 2))]
     storage_levels = [int(x) for x in getattr(cfg, "storage_levels", (3, 4))]
@@ -2219,6 +2195,24 @@ def _pass1_pick_storage_balance(
         if lv in pick_levels: return "pick"
         if lv in storage_levels: return "storage"
         return "other"
+
+    # ロケ座標インデックスを事前構築: (col, lv) → [locs]
+    # shelf_usage全ロケを一度だけスキャンし、内側ループのO(n)→O(1)化
+    _col_lv_locs: dict[tuple[int, int], list[str]] = {}
+    for _loc in shelf_usage.keys():
+        if _loc in PLACEHOLDER_LOCS:
+            continue
+        _lv, _col, _ = _parse_loc8(_loc)
+        _col_lv_locs.setdefault((_col, _lv), []).append(_loc)
+
+    # FIFO違反チェック用インデックスを事前構築: (sku, col) → [(lot_key, lv)]
+    # _violates_lot_level_rule_fast のために全在庫を1回走査してキャッシュ
+    _lot_levels_by_sku_col: Dict[Tuple[str, int], List[Tuple[int, int]]] = {}
+    for (_sku_g, _col_g), _grp_g in inv.groupby(["商品ID", "col"]):
+        _lot_levels_by_sku_col[(str(_sku_g), int(_col_g))] = list(zip(
+            _grp_g["lot_key"].astype(int).tolist(),
+            _grp_g["lv"].astype(int).tolist(),
+        ))
 
     groups_processed = 0
     groups_with_moves = 0
@@ -2238,13 +2232,7 @@ def _pass1_pick_storage_balance(
         # 望ましい割当（index -> 目標レベル）
         desired_levels: Dict[int, int] = {}
         rows = list(g.iterrows())
-        
-        # Debug: Log group info
-        if len(rows) > 1 and groups_processed <= 3:  # Log first 3 multi-row groups
-            print(f"[Pass-1] Group: col={c}, sku={sku}, rows={len(rows)}")
-            for rank, (idx, row) in enumerate(rows):
-                print(f"  rank={rank}, lv={row['lv']}, lot_key={row['lot_key']}, loc={row['ロケーション']}")
-        
+
         for rank, (idx, row) in enumerate(rows):
             if rank < len(pick_levels):
                 desired_levels[idx] = pick_levels[rank]
@@ -2266,45 +2254,37 @@ def _pass1_pick_storage_balance(
                 continue
 
             # --- 1) 同列・目標段の空き候補（容量OK)を探索
+            # _col_lv_locs インデックスにより O(1) ルックアップ
             cand_locs = [
-                loc for loc in shelf_usage.keys()
-                if loc not in PLACEHOLDER_LOCS
-                and loc != from_loc
-                and _parse_loc8(loc)[1] == c_int
-                and _parse_loc8(loc)[0] == target_lv
-                and (can_receive is None or loc in can_receive)
+                loc for loc in _col_lv_locs.get((c_int, target_lv), [])
+                if loc != from_loc and (can_receive is None or loc in can_receive)
             ]
             # 目標段が埋まっている場合、同側の他段にフォールバック
             if not cand_locs and _side(target_lv) == "storage":
                 cand_locs = [
-                    loc for loc in shelf_usage.keys()
-                    if loc not in PLACEHOLDER_LOCS
-                    and loc != from_loc
-                    and _parse_loc8(loc)[1] == c_int
-                    and _parse_loc8(loc)[0] in storage_levels
-                    and (can_receive is None or loc in can_receive)
+                    loc
+                    for slv in storage_levels
+                    for loc in _col_lv_locs.get((c_int, slv), [])
+                    if loc != from_loc and (can_receive is None or loc in can_receive)
                 ]
             if not cand_locs and _side(target_lv) == "pick":
                 cand_locs = [
-                    loc for loc in shelf_usage.keys()
-                    if loc not in PLACEHOLDER_LOCS
-                    and loc != from_loc
-                    and _parse_loc8(loc)[1] == c_int
-                    and _parse_loc8(loc)[0] in pick_levels
-                    and (can_receive is None or loc in can_receive)
+                    loc
+                    for plv in pick_levels
+                    for loc in _col_lv_locs.get((c_int, plv), [])
+                    if loc != from_loc and (can_receive is None or loc in can_receive)
                 ]
             cand_locs.sort(key=_location_key)
 
             best_to = None
             best_score = math.inf
-            empty_cand_count = sum(1 for loc in cand_locs if shelf_usage.get(loc, 0.0) == 0.0)
             for to_loc in cand_locs:
                 tlv, tcol, tdep = _parse_loc8(to_loc)
                 used = float(shelf_usage.get(to_loc, 0.0))
                 limit = cap_by_loc.get(to_loc, cap_limit) if cap_by_loc else cap_limit
                 if used + need_vol > limit:
                     continue
-                if _violates_lot_level_rule(inv, str(row["商品ID"]), lot_key, tlv, tcol, tdep, idx):
+                if _violates_lot_level_rule_fast(str(row["商品ID"]), lot_key, tlv, tcol, _lot_levels_by_sku_col):
                     continue
                 # 空きロケ（used==0）を優先するスコア計算
                 # 空きロケなら-1000でスコアを大幅に下げる
@@ -2314,13 +2294,6 @@ def _pass1_pick_storage_balance(
                     best_score = score
                     best_to = to_loc
             
-            # デバッグ: 空きロケ候補がある場合はログ出力
-            if empty_cand_count > 0 and best_to and shelf_usage.get(best_to, 0.0) > 0:
-                try:
-                    print(f"[Pass-1 Debug] 空きロケ{empty_cand_count}件あったが選ばれず: col={c_int}, sku={row['商品ID']}, best_to={best_to} (used={shelf_usage.get(best_to, 0.0):.2f})")
-                except:
-                    pass
-
             # Initialize swap chain tracking
             _pending_swap_chain_id = None
 
@@ -2351,14 +2324,12 @@ def _pass1_pick_storage_balance(
                         # 未分類は現状側の反対（targetの反対）へ逃がす
                         o_side_lv = list(storage_levels if _side(target_lv) == "pick" else pick_levels)
 
-                    # occupant の退避先候補（同列内・容量OK）
+                    # occupant の退避先候補（同列内・容量OK）- _col_lv_locs でO(1)化
                     occ_cands = [
-                        loc for loc in shelf_usage.keys()
-                        if loc not in PLACEHOLDER_LOCS
-                        and loc != o_from
-                        and _parse_loc8(loc)[1] == c_int
-                        and _parse_loc8(loc)[0] in o_side_lv
-                        and (can_receive is None or loc in can_receive)
+                        loc
+                        for o_lv in o_side_lv
+                        for loc in _col_lv_locs.get((c_int, o_lv), [])
+                        if loc != o_from and (can_receive is None or loc in can_receive)
                     ]
                     occ_cands.sort(key=_location_key)
 
@@ -2369,7 +2340,7 @@ def _pass1_pick_storage_balance(
                         if used_o + o_need_vol > limit_o:
                             continue
                         # occupant の移動でも FIFO 破綻は不可
-                        if _violates_lot_level_rule(inv, str(o_row["商品ID"]), o_lot_key, olv, ocol, odep, o_idx):
+                        if _violates_lot_level_rule_fast(str(o_row["商品ID"]), o_lot_key, olv, ocol, _lot_levels_by_sku_col):
                             continue
                         o_score = abs(olv - o_cur_lv) + (odep * 0.001)
                         if o_score < best_occ_score:
@@ -3209,26 +3180,37 @@ def _pass0_area_rebalance(
         return moves
 
     # 走査順：『帯外度』が高いものを先に（代表入数との差/ルール違反の明確さで近似）
-    def _misalign_score(row: pd.Series) -> float:
-        try:
-            allowed = _allowed_cols_for_row(row, cfg)
-            cur = int(row.get("col") or 0)
-            in_allowed = cur in allowed
-            pack_val = float(row.get("pack_est")) if pd.notna(row.get("pack_est")) else float("nan")
-            rep = rep_pack_by_col.get(cur)
-            diff = 0.0
-            if pd.notna(pack_val) and rep and float(rep) > 0:
-                diff = abs(float(pack_val) - float(rep)) / float(rep)
-            base = 1.0 if not in_allowed else 0.0
-            return base * (1.0 + diff)
-        except Exception:
-            return 0.0
+    # ベクトル化実装: apply(axis=1) を避けてDataFrame全体に一括演算
+    _small_cols_f = frozenset(getattr(cfg, "small_pack_cols", range(35, 42)))
+    _medium_cols_f = frozenset(getattr(cfg, "medium_pack_cols", range(12, 35)))
+    _large_cols_f = frozenset(getattr(cfg, "large_pack_cols", range(1, 12)))
+    _low_max_f = int(getattr(cfg, "pack_low_max", 12))
+    _high_min_f = int(getattr(cfg, "pack_high_min", 50))
+    _promo_kw_f = tuple(getattr(cfg, "promo_quality_keywords", ("販促資材", "販促", "什器", "資材")))
 
-    # ベクトル化: apply(axis=1)を避けて高速化
-    try:
-        cand["__misalign"] = cand.apply(_misalign_score, axis=1)
-    except Exception:
-        cand["__misalign"] = 0.0
+    _qcol_f = "品質区分名" if "品質区分名" in cand.columns else ("quality_name" if "quality_name" in cand.columns else None)
+    if _qcol_f:
+        import re as _re
+        _promo_pat_f = "|".join(_re.escape(k) for k in _promo_kw_f)
+        _is_promo_vec = cand[_qcol_f].fillna("").str.contains(_promo_pat_f, regex=True, na=False)
+    else:
+        _is_promo_vec = pd.Series(False, index=cand.index)
+
+    _pack_vec = pd.to_numeric(cand.get("pack_est", pd.Series(dtype=float, index=cand.index)), errors="coerce")
+    _col_vec = cand["col"].astype(int)
+
+    _is_large_zone = _is_promo_vec | (_pack_vec >= _high_min_f)
+    _is_small_zone = (~_is_large_zone) & (_pack_vec <= _low_max_f)
+    _is_medium_zone = ~_is_large_zone & ~_is_small_zone
+
+    _in_allowed_vec = (
+        (_is_large_zone & _col_vec.isin(_large_cols_f)) |
+        (_is_small_zone & _col_vec.isin(_small_cols_f)) |
+        (_is_medium_zone & _col_vec.isin(_medium_cols_f))
+    )
+    _rep_vec = _col_vec.map(rep_pack_by_col)
+    _diff_vec = ((_pack_vec - _rep_vec).abs() / _rep_vec.replace(0, float("nan"))).fillna(0.0)
+    cand["__misalign"] = (~_in_allowed_vec).astype(float) * (1.0 + _diff_vec)
     cand = cand.sort_values(["__misalign", "lot_key"], ascending=[False, True])
 
     # レベルの優先順：現在段→設定の pass0_target_levels 順
@@ -3732,9 +3714,23 @@ def plan_relocation(
     
     if multi_sku_locs:
         before_inv_count = len(inv)
+        # --- Fix1: 最古ロット（lot_rank=1相当）は混在ロケからでも移動を許可 ---
+        # lot_key を先に計算（まだ付いていない場合）
+        if "lot_key" not in inv.columns:
+            inv["lot_key"] = inv["ロット"].map(_parse_lot_date_key)
+        # SKUごとの最古 lot_key（= lot_rank=1 相当）を算出
+        _valid_lots = inv[inv["lot_key"] != UNKNOWN_LOT_KEY]
+        _oldest_lot_by_sku = _valid_lots.groupby("商品ID")["lot_key"].min()
+        _is_oldest_lot = (
+            inv["商品ID"].map(_oldest_lot_by_sku) == inv["lot_key"]
+        ) & (inv["lot_key"] != UNKNOWN_LOT_KEY)
         # 移動元から除外: 複数SKU混在ロケにある在庫は移動しない
-        inv = inv[~inv["ロケーション"].isin(multi_sku_locs)].copy()
+        # ただし最古ロット行は例外 — FIFO改善のため移動を許可する
+        _in_multi = inv["ロケーション"].isin(multi_sku_locs)
+        inv = inv[~_in_multi | _is_oldest_lot].copy()
         excluded_inv_count = before_inv_count - len(inv)
+        _oldest_exception_count = int((_in_multi & _is_oldest_lot).sum())
+        print(f"[optimizer] Fix1: 最古ロット例外 {_oldest_exception_count}件 を混在ロケから移動許可")
         
         # 移動先から除外: can_receive_setから複数SKU混在ロケを削除
         if can_receive_set:
@@ -5115,4 +5111,202 @@ def plan_relocation(
         
         return accepted
 
-    return moves
+
+# ---------------------------------------------------------------------------
+# score_all_inventory: 全在庫スコアリング（移動なし・現状課題の可視化）
+# ---------------------------------------------------------------------------
+
+def score_all_inventory(
+    sku_master: pd.DataFrame,
+    inventory: pd.DataFrame,
+    *,
+    cfg: OptimizerConfig | None = None,
+    loc_master: Optional[pd.DataFrame] = None,
+    block_filter: Iterable[str] | None = None,
+    quality_filter: Iterable[str] | None = None,
+) -> dict:
+    """
+    全在庫をスコアリングして現状の最適化課題を可視化する（移動は行わない）。
+
+    課題の種別:
+      - fifo_issue: 最古ロット(lot_rank=1)が取り口（段1-2）にない
+      - swap_needed: 取り口にいるが最古ロットではない（同SKUの最古が保管にある）
+      - packband_issue: 入数帯エリア（列ゾーン）が間違っている
+
+    Returns
+    -------
+    dict
+        inventory_scores: 在庫ごとのスコア・課題フラグ（total_issue_score降順）
+        summary: 問題件数の集計
+    """
+    cfg = cfg or OptimizerConfig()
+    pick_levels = tuple(getattr(cfg, "pick_levels", (1, 2)))
+    pack_mismatch_penalty = float(getattr(cfg, "pack_mismatch_penalty", 400.0))
+
+    # --- 在庫データ正規化 ---
+    inv = inventory.copy()
+    if "ブロック略称" not in inv.columns and "block_code" in inv.columns:
+        inv["ブロック略称"] = inv["block_code"]
+    if "quality_name" not in inv.columns and "品質区分名" in inv.columns:
+        inv["quality_name"] = inv["品質区分名"].astype(str)
+
+    # フィルタ適用
+    if block_filter is not None:
+        inv = inv[inv["ブロック略称"].isin(list(block_filter))].copy()
+    if quality_filter is not None:
+        q_col = "quality_name" if "quality_name" in inv.columns else "品質区分名"
+        if q_col in inv.columns:
+            inv = inv[inv[q_col].isin(list(quality_filter))].copy()
+
+    # プレースホルダロケは除外
+    inv = inv[~inv["ロケーション"].astype(str).isin(PLACEHOLDER_LOCS)].copy()
+
+    # ロケーションを8桁ゼロパディング
+    inv["ロケーション"] = inv["ロケーション"].astype(str).str.replace(r"\.0$", "", regex=True).str.zfill(8)
+
+    # ロケマスタフィルタ
+    if loc_master is not None and not loc_master.empty:
+        lm_scoped = _filter_loc_master_by_block_quality(loc_master, block_filter, quality_filter)
+        cap_by_loc, _ = _cap_map_from_master(lm_scoped, getattr(cfg, "fill_rate", DEFAULT_FILL_RATE))
+        valid_locs_set = set(cap_by_loc.keys())
+        inv = inv[inv["ロケーション"].isin(valid_locs_set)].copy()
+
+    # 引当在庫は除外
+    if "引当数" in inv.columns:
+        inv = inv[pd.to_numeric(inv["引当数"], errors="coerce").fillna(0) <= 0].copy()
+
+    if inv.empty:
+        return {
+            "inventory_scores": [],
+            "summary": {
+                "total_items": 0,
+                "fifo_issues": 0,
+                "swap_needed": 0,
+                "packband_issues": 0,
+                "items_with_issues": 0,
+                "skus_with_oldest_not_at_pick": 0,
+                "skus_needing_swap": 0,
+                "skus_with_packband_issue": 0,
+            },
+        }
+
+    # lot_key（ロット日付を整数キーに変換）
+    inv["lot_key"] = inv["ロット"].map(_parse_lot_date_key)
+
+    # lv / col / dep をロケーション文字列から解析
+    loc_str = inv["ロケーション"].astype(str).str.zfill(8)
+    inv["lv"]  = pd.to_numeric(loc_str.str[0:3], errors="coerce").fillna(0).astype(int)
+    inv["col"] = pd.to_numeric(loc_str.str[3:6], errors="coerce").fillna(0).astype(int)
+    inv["dep"] = pd.to_numeric(loc_str.str[6:8],  errors="coerce").fillna(0).astype(int)
+    inv["ease_key"] = (
+        inv["lv"] * 10000
+        + (42 - inv["col"]) * 100
+        + inv["dep"]
+    )
+
+    # 入数（pack_est）を付与
+    pack_map: Optional[pd.Series] = None
+    if "入数" in sku_master.columns:
+        sku_key = "sku_id" if "sku_id" in sku_master.columns else "商品ID"
+        # SKUマスタに重複がある場合は最初の値を使用
+        pack_map = sku_master.drop_duplicates(subset=[sku_key]).set_index(sku_key)["入数"].astype(float)
+    if pack_map is not None:
+        inv["pack_est"] = inv["商品ID"].astype(str).map(pack_map).fillna(0.0)
+    elif "pack_qty" in inv.columns:
+        inv["pack_est"] = pd.to_numeric(inv["pack_qty"], errors="coerce").fillna(0.0)
+    else:
+        inv["pack_est"] = 0.0
+
+    # ケース数
+    if "cases" in inv.columns:
+        inv["qty_cases"] = pd.to_numeric(inv["cases"], errors="coerce").fillna(0.0)
+    elif "ケース" in inv.columns:
+        inv["qty_cases"] = pd.to_numeric(inv["ケース"], errors="coerce").fillna(0.0)
+    else:
+        inv["qty_cases"] = 0.0
+
+    # --- FIFO ランキング（SKU全体での古い順: 1=最古）---
+    # 同一SKUの全ロケーションを横断して lot_key を昇順ランク付け
+    inv["lot_rank"] = (
+        inv.groupby("商品ID")["lot_key"]
+        .rank(method="dense", ascending=True)
+        .astype(int)
+    )
+
+    # 取り口フラグ
+    inv["is_at_pick"] = inv["lv"].isin(pick_levels)
+
+    # 各SKU で「最古ロット(rank=1)が取り口にあるか」を集計
+    oldest_at_pick = (
+        inv[inv["lot_rank"] == 1]
+        .groupby("商品ID")["is_at_pick"]
+        .any()
+    )
+    inv["oldest_at_pick"] = inv["商品ID"].map(oldest_at_pick).fillna(False)
+
+    # --- 課題フラグ ---
+    # 1) FIFO課題: 最古ロット(rank=1)が取り口にない
+    inv["fifo_issue"] = (inv["lot_rank"] == 1) & (~inv["is_at_pick"])
+
+    # 2) スワップ課題: 取り口にいるが最古ではない（同SKUの最古が保管にある）
+    inv["swap_needed"] = (
+        inv["is_at_pick"]
+        & (inv["lot_rank"] > 1)
+        & (~inv["oldest_at_pick"])
+    )
+
+    # 3) 入数帯課題: 正しい列ゾーンにいない
+    allowed_cols_series = inv.apply(lambda row: _allowed_cols_for_row(row, cfg), axis=1)
+    inv["packband_issue"] = inv.apply(
+        lambda row: int(row["col"]) not in allowed_cols_series[row.name], axis=1
+    )
+
+    # --- スコア計算 ---
+    # fifo_score: (現在の段-1) × 10000（段が高いほどペナルティ大）
+    inv["fifo_score"] = (
+        inv["fifo_issue"].astype(int) * (inv["lv"] - 1) * 10000
+        + inv["swap_needed"].astype(int) * 5000
+    )
+    inv["packband_score"] = inv["packband_issue"].astype(int) * pack_mismatch_penalty
+    inv["total_issue_score"] = inv["fifo_score"] + inv["packband_score"]
+
+    # --- サマリー ---
+    summary = {
+        "total_items": len(inv),
+        "fifo_issues": int(inv["fifo_issue"].sum()),
+        "swap_needed": int(inv["swap_needed"].sum()),
+        "packband_issues": int(inv["packband_issue"].sum()),
+        "items_with_issues": int((inv["total_issue_score"] > 0).sum()),
+        "skus_with_oldest_not_at_pick": int(
+            inv[(inv["lot_rank"] == 1) & (~inv["is_at_pick"])]["商品ID"].nunique()
+        ),
+        "skus_needing_swap": int(inv[inv["swap_needed"]]["商品ID"].nunique()),
+        "skus_with_packband_issue": int(inv[inv["packband_issue"]]["商品ID"].nunique()),
+    }
+
+    print(
+        f"[score_all_inventory] 合計={summary['total_items']}件 "
+        f"FIFO課題={summary['fifo_issues']} "
+        f"スワップ必要={summary['swap_needed']} "
+        f"入数帯課題={summary['packband_issues']}"
+    )
+
+    # --- 出力 ---
+    output_cols = [
+        "商品ID", "ロット", "ロケーション", "lv", "col", "dep",
+        "ease_key", "pack_est", "qty_cases", "lot_key", "lot_rank",
+        "is_at_pick", "oldest_at_pick",
+        "fifo_issue", "swap_needed", "packband_issue",
+        "fifo_score", "packband_score", "total_issue_score",
+    ]
+    available_cols = [c for c in output_cols if c in inv.columns]
+    records = (
+        inv[available_cols]
+        .sort_values("total_issue_score", ascending=False)
+        .to_dict(orient="records")
+    )
+
+    return {
+        "inventory_scores": records,
+        "summary": summary,
+    }
