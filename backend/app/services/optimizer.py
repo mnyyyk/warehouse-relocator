@@ -1339,6 +1339,15 @@ def enforce_constraints(
     for (_loc, _sku_id), _grp in sim_inv.groupby(["ロケーション", "商品ID"]):
         _sim_lots_by_loc_sku[(str(_loc), str(_sku_id))] = set(int(x) for x in _grp["lot_key"].tolist())
 
+    # FIFO高速チェック用インデックス (sku, col) → [(lot_key, lv)]
+    # pd.concatによるO(n²)問題を回避し、O(1)ルックアップに置き換える
+    _sim_inv_by_sku_col: Dict[Tuple[str, int], List[Tuple[int, int]]] = {}
+    for (_sku_g, _col_g), _grp_g in sim_inv.groupby(["商品ID", "col"]):
+        _sim_inv_by_sku_col[(str(_sku_g), int(_col_g))] = list(zip(
+            _grp_g["lot_key"].astype(int).tolist(),
+            _grp_g["lv"].astype(int).tolist(),
+        ))
+
     processed = 0
     step = max(1, len(moves) // 20) if moves else 1
     for m in moves:
@@ -1349,6 +1358,7 @@ def enforce_constraints(
         to_loc = str(m.to_loc)
         from_loc = str(m.from_loc)
         tlv, tcol, tdep = _parse_loc8(to_loc)
+        flv, fcol, fdep = _parse_loc8(from_loc)
         add_each = float(sku_vol_map.get(sku, 0.0) or 0.0)
         add_vol = add_each * float(m.qty)
         _mctx = {
@@ -1391,7 +1401,7 @@ def enforce_constraints(
 
         # 3) FIFO strict (same column)
         if cfg.hard_fifo:
-            if _hard_fifo_violation_simple(sim_inv, sku, lot_key, tlv, tcol):
+            if _violates_lot_level_rule_fast(sku, lot_key, tlv, tcol, _sim_inv_by_sku_col):
                 _dbg_reject("fifo", _mctx, note=f"lot_key={lot_key}, target_lv={tlv}, col={tcol}")
                 continue
 
@@ -1444,8 +1454,15 @@ def enforce_constraints(
         shelf_usage[to_loc] = shelf_usage.get(to_loc, 0.0) + add_vol
         shelf_usage[from_loc] = max(0.0, shelf_usage.get(from_loc, 0.0) - add_vol)
 
-        new_row = {"商品ID": sku, "lot_key": lot_key, "lv": tlv, "col": tcol, "dep": tdep, "ロケーション": to_loc}
-        sim_inv = pd.concat([sim_inv, pd.DataFrame([new_row])], ignore_index=True)
+        # O(1): dict インデックスを逐次更新（pd.concat による O(n²) を廃止）
+        _to_key_fc = (sku, int(tcol))
+        _sim_inv_by_sku_col.setdefault(_to_key_fc, []).append((int(lot_key), int(tlv)))
+        _from_key_fc = (sku, int(fcol))
+        if _from_key_fc in _sim_inv_by_sku_col:
+            try:
+                _sim_inv_by_sku_col[_from_key_fc].remove((int(lot_key), int(flv)))
+            except ValueError:
+                pass
         # Fix2: _sim_lots_by_loc_sku を逐次更新（移動先に追加、移動元から削除）
         _to_key = (to_loc, sku)
         _from_key = (from_loc, sku)
