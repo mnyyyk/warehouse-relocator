@@ -16,11 +16,11 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from typing import Annotated, Callable
-from typing import Any, Dict, List, Optional, Literal, Generator
+from typing import Any, Dict, List, Optional, Literal
 from decimal import Decimal, ROUND_HALF_UP
 
 import pandas as pd
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, Query, BackgroundTasks
+from fastapi import APIRouter, File, HTTPException, UploadFile, Query, BackgroundTasks
 from fastapi.responses import StreamingResponse
 from sqlmodel import Session, SQLModel
 
@@ -99,6 +99,7 @@ def _normalize_sku_id(value: str | int) -> str:
 
 from app.core.database import engine
 from app.models import Inventory, RecvTx, ShipTx, Sku
+from app.core.deps import TenantDB, CurrentUser
 # Prefer the dedicated SQLModel in app.models; fall back to an inline dev stub
 try:
     from app.models.location_master import LocationMaster  # type: ignore
@@ -342,16 +343,11 @@ def _upsert_location_master(session: Session, rows: list[dict], set_dict: dict |
         stmt = _sa_insert(tbl).values(rows)
 
     session.execute(stmt)
-    session.commit()
+    session.flush()
 
 # --------------------------------------------------------------------------- #
 # helpers                                                                     #
 # --------------------------------------------------------------------------- #
-
-
-def get_session() -> Generator[Session, None, None]:  # dependency
-    with Session(engine) as ses:
-        yield ses
 
 
 
@@ -412,7 +408,7 @@ def _generic_insert(
         if missing:
             # Auto-create with default pack_qty=1 and no dimensions
             session.bulk_save_objects([Sku(sku_id=m, pack_qty=1) for m in missing])
-            session.commit()
+            session.flush()
             existing.update(missing)
 
         # Canonicalise all objects now that SKUs are ensured
@@ -432,7 +428,7 @@ def _generic_insert(
         missing = sorted(incoming_ids - set(sku_pack_map.keys()))
         if missing:
             session.bulk_save_objects([Sku(sku_id=m, pack_qty=1) for m in missing])
-            session.commit()
+            session.flush()
             # refresh map including new entries
             sku_pack_map.update({m: 1 for m in missing})
 
@@ -458,7 +454,7 @@ def _generic_insert(
         missing = sorted(incoming_ids - set(sku_pack_map.keys()))
         if missing:
             session.bulk_save_objects([Sku(sku_id=m, pack_qty=1) for m in missing])
-            session.commit()
+            session.flush()
             sku_pack_map.update({m: 1 for m in missing})
 
         filtered: list[SQLModel] = []
@@ -633,7 +629,7 @@ def _generic_insert(
                                 dropped_indexes.append((str(name), str(sql)))
                             except Exception:
                                 pass
-                        session.commit()
+                        session.flush()
             except Exception:
                 pass
             try:
@@ -743,7 +739,7 @@ def _generic_insert(
 
                         session.execute(stmt1)
                         successes += 1
-                        session.commit()
+                        session.flush()
                     except Exception as row_exc:
                         session.rollback()
                         # エラー内容と一部キー情報のみを記録（個人情報/巨大データのダンプは避ける）
@@ -757,7 +753,7 @@ def _generic_insert(
                             "preview": key_preview,
                         })
 
-        session.commit()
+        session.flush()
         # SQLite: インデックス復元
         try:
             if dialect == "sqlite" and dropped_indexes:
@@ -766,7 +762,7 @@ def _generic_insert(
                         session.exec(text(sql))
                     except Exception:
                         pass
-                session.commit()
+                session.flush()
         except Exception:
             pass
         t_sql1 = perf_counter()
@@ -837,7 +833,7 @@ def _update_inventory_lot_dates(session: Session) -> int:
         """
     )
     result = session.exec(sql)
-    session.commit()
+    session.flush()
     try:
         return int(getattr(result, "rowcount", 0) or 0)
     except Exception:
@@ -849,6 +845,7 @@ def _update_inventory_lot_dates(session: Session) -> int:
 
 # Cache of normalised header maps keyed by the tuple of original column names
 _HEADER_MAP_CACHE: dict[tuple, dict[str, str]] = {}
+_HEADER_MAP_CACHE_MAX = 100  # キャッシュエントリの上限
 
 
 def _normalize_header(name: str) -> str:  # noqa: D401
@@ -903,6 +900,11 @@ def _col(row: pd.Series, *candidates: str):  # noqa: D401
     normalised_map = _HEADER_MAP_CACHE.get(idx_key)
     if normalised_map is None:
         normalised_map = {_normalize_header(col): col for col in row.index}
+        # サイズ上限を超えた場合、古いエントリを半分削除してメモリリークを防ぐ
+        if len(_HEADER_MAP_CACHE) >= _HEADER_MAP_CACHE_MAX:
+            keys_to_remove = list(_HEADER_MAP_CACHE.keys())[: _HEADER_MAP_CACHE_MAX // 2]
+            for k in keys_to_remove:
+                del _HEADER_MAP_CACHE[k]
         _HEADER_MAP_CACHE[idx_key] = normalised_map
 
     for cand in candidates:
@@ -1655,7 +1657,7 @@ def upload_location_master(
         # Replace or patch mode
         if mode == "replace":
             ses.exec(text("DELETE FROM location_master WHERE block_code = :b AND quality_name = :q").bindparams(b=block, q=quality))
-            ses.commit()
+            ses.flush()
 
         from sqlalchemy.dialects.postgresql import insert as _pg_insert
         tbl = LocationMaster.__table__
@@ -1679,10 +1681,20 @@ def upload_location_master(
                 },
             )
 
-        # Stats
-        total = ses.exec(text("SELECT COUNT(*) FROM location_master WHERE block_code=:b AND quality_name=:q").bindparams(b=block, q=quality)).one()[0]
-        can_recv = ses.exec(text("SELECT COUNT(*) FROM location_master WHERE block_code=:b AND quality_name=:q AND can_receive").bindparams(b=block, q=quality)).one()[0]
-        high_cnt = ses.exec(text("SELECT COUNT(*) FROM location_master WHERE block_code=:b AND quality_name=:q AND highness").bindparams(b=block, q=quality)).one()[0]
+        # Stats（flush済みのデータをORM経由で読む — search_path問題を回避）
+        try:
+            _stats_q = ses.exec(
+                _sa_select(LocationMaster).where(
+                    LocationMaster.block_code == block,
+                    LocationMaster.quality_name == quality,
+                )
+            ).all()
+            total = len(_stats_q)
+            can_recv = sum(1 for r in _stats_q if r.can_receive)
+            high_cnt = sum(1 for r in _stats_q if r.highness)
+        except Exception:
+            total = 0; can_recv = 0; high_cnt = 0
+        ses.commit()
 
         return {
             "block": block,
@@ -1738,9 +1750,19 @@ def upload_location_master_valid(
                     "capacity_m3": text("excluded.capacity_m3"),
                 },
             )
-        total = ses.exec(text("SELECT COUNT(*) FROM location_master WHERE block_code=:b AND quality_name=:q").bindparams(b=block, q=quality)).one()[0]
-        can_recv = ses.exec(text("SELECT COUNT(*) FROM location_master WHERE block_code=:b AND quality_name=:q AND can_receive").bindparams(b=block, q=quality)).one()[0]
-        high_cnt = ses.exec(text("SELECT COUNT(*) FROM location_master WHERE block_code=:b AND quality_name=:q AND highness").bindparams(b=block, q=quality)).one()[0]
+        try:
+            _stats_q = ses.exec(
+                _sa_select(LocationMaster).where(
+                    LocationMaster.block_code == block,
+                    LocationMaster.quality_name == quality,
+                )
+            ).all()
+            total = len(_stats_q)
+            can_recv = sum(1 for r in _stats_q if r.can_receive)
+            high_cnt = sum(1 for r in _stats_q if r.highness)
+        except Exception:
+            total = 0; can_recv = 0; high_cnt = 0
+        ses.commit()
         return {"block": block, "quality": quality, "mode": "patch", "total_slots": int(total), "can_receive": int(can_recv), "cannot_receive": int(total) - int(can_recv), "highness": int(high_cnt)}
     except HTTPException:
         raise
@@ -1779,9 +1801,19 @@ def upload_location_master_invalid(
                     "capacity_m3": text("excluded.capacity_m3"),
                 },
             )
-        total = ses.exec(text("SELECT COUNT(*) FROM location_master WHERE block_code=:b AND quality_name=:q").bindparams(b=block, q=quality)).one()[0]
-        can_recv = ses.exec(text("SELECT COUNT(*) FROM location_master WHERE block_code=:b AND quality_name=:q AND can_receive").bindparams(b=block, q=quality)).one()[0]
-        high_cnt = ses.exec(text("SELECT COUNT(*) FROM location_master WHERE block_code=:b AND quality_name=:q AND highness").bindparams(b=block, q=quality)).one()[0]
+        try:
+            _stats_q = ses.exec(
+                _sa_select(LocationMaster).where(
+                    LocationMaster.block_code == block,
+                    LocationMaster.quality_name == quality,
+                )
+            ).all()
+            total = len(_stats_q)
+            can_recv = sum(1 for r in _stats_q if r.can_receive)
+            high_cnt = sum(1 for r in _stats_q if r.highness)
+        except Exception:
+            total = 0; can_recv = 0; high_cnt = 0
+        ses.commit()
         return {"block": block, "quality": quality, "mode": "patch", "total_slots": int(total), "can_receive": int(can_recv), "cannot_receive": int(total) - int(can_recv), "highness": int(high_cnt)}
     except HTTPException:
         raise
@@ -1821,9 +1853,19 @@ def upload_location_master_highness(
                     "capacity_m3": text("excluded.capacity_m3"),
                 },
             )
-        total = ses.exec(text("SELECT COUNT(*) FROM location_master WHERE block_code=:b AND quality_name=:q").bindparams(b=block, q=quality)).one()[0]
-        can_recv = ses.exec(text("SELECT COUNT(*) FROM location_master WHERE block_code=:b AND quality_name=:q AND can_receive").bindparams(b=block, q=quality)).one()[0]
-        high_cnt = ses.exec(text("SELECT COUNT(*) FROM location_master WHERE block_code=:b AND quality_name=:q AND highness").bindparams(b=block, q=quality)).one()[0]
+        try:
+            _stats_q = ses.exec(
+                _sa_select(LocationMaster).where(
+                    LocationMaster.block_code == block,
+                    LocationMaster.quality_name == quality,
+                )
+            ).all()
+            total = len(_stats_q)
+            can_recv = sum(1 for r in _stats_q if r.can_receive)
+            high_cnt = sum(1 for r in _stats_q if r.highness)
+        except Exception:
+            total = 0; can_recv = 0; high_cnt = 0
+        ses.commit()
         return {"block": block, "quality": quality, "mode": "patch", "total_slots": int(total), "can_receive": int(can_recv), "cannot_receive": int(total) - int(can_recv), "highness": int(high_cnt)}
     except HTTPException:
         raise
@@ -1833,7 +1875,7 @@ def upload_location_master_highness(
 
 
 UploadDep = Annotated[UploadFile, File(...)]
-SesDep = Annotated[Session, Depends(get_session)]
+SesDep = TenantDB
 
 
 # --------------------------------------------------------------------------- #
@@ -1887,7 +1929,7 @@ def _truncate_tables(
         opt_sql = (" " + " ".join(opts)) if opts else ""
         tbl_sql = ", ".join(targets)
         session.exec(text(f"TRUNCATE TABLE {tbl_sql}{opt_sql}"))
-        session.commit()
+        session.flush()
         return
 
     # Fallback: DELETE rows per table (pre-check existence to avoid noisy tracebacks)
@@ -1916,7 +1958,7 @@ def _truncate_tables(
             except Exception:
                 # sqlite_sequence may not exist (older SQLite or no AUTOINCREMENT)
                 pass
-    session.commit()
+    session.flush()
 
 
 @router.post("/sku")
@@ -1971,6 +2013,7 @@ async def upload_sku(file: UploadDep, ses: SesDep):
             logger.info("upload_sku: done total=%s success=%s errors=%s", summary.get("total_rows"), summary.get("success_rows"), summary.get("error_rows"))
         except Exception:
             pass
+        ses.commit()
         # attach error CSV url if any
         if summary["error_rows"] > 0:
             summary["error_csv_url"] = _save_error_csv(summary["errors"])
@@ -2002,16 +2045,28 @@ async def upload_inventory(file: UploadDep, ses: SesDep):
                 logger.info(f"[inventory upload] First row quality value: {sample_quality!r}")
         
         # 2) 置き換え
+        # TRUNCATE前の行数を記録
+        try:
+            _pre_count = ses.exec(text("SELECT COUNT(*) FROM inventory")).scalar()
+            print(f"[inventory upload] TRUNCATE前の行数: {_pre_count}")
+        except Exception as e:
+            print(f"[inventory upload] TRUNCATE前COUNT失敗: {e}")
+            _pre_count = "unknown"
         _truncate_tables(ses, ["inventory"], restart_identity=True)
+        try:
+            _post_count = ses.exec(text("SELECT COUNT(*) FROM inventory")).scalar()
+            print(f"[inventory upload] TRUNCATE後の行数: {_post_count}")
+        except Exception as e:
+            print(f"[inventory upload] TRUNCATE後COUNT失敗: {e}")
         # 3) 挿入
+        print(f"[inventory upload] INSERT開始: {len(df)}行")
         summary = _generic_insert(df, Inventory, _inventory_mapper, ses, use_upsert=True)
-        
-        # DEBUG: Check quality_name after insert
-        from sqlmodel import select
-        inv_sample = ses.exec(select(Inventory).limit(10)).all()
-        quality_count = len([i for i in inv_sample if i.quality_name is not None])
-        logger.info(f"[inventory upload] After insert: {quality_count}/{len(inv_sample)} sample rows have quality_name")
-        
+        try:
+            _final_count = ses.exec(text("SELECT COUNT(*) FROM inventory")).scalar()
+            print(f"[inventory upload] INSERT後の行数: {_final_count}")
+        except Exception:
+            pass
+
         # Backfill/derive lot_date column from lot text（SQLiteでは失敗しても無害に握りつぶす）
         try:
             updated_cnt = _update_inventory_lot_dates(ses)
@@ -2019,6 +2074,9 @@ async def upload_inventory(file: UploadDep, ses: SesDep):
         except Exception:
             logger.exception("inventory lot_date backfill failed")
             summary["lot_date_updated_rows"] = 0
+        # 明示的にコミット（TRUNCATE + INSERT を確定）
+        ses.commit()
+        print(f"[inventory upload] コミット完了")
         # attach error CSV url if any
         if summary["error_rows"] > 0:
             summary["error_csv_url"] = _save_error_csv(summary["errors"])
@@ -2042,6 +2100,7 @@ async def upload_ship_tx(file: UploadDep, ses: SesDep):
         _truncate_tables(ses, ["ship_tx"], restart_identity=True)
         # 3) 挿入
         summary = _generic_insert(df, ShipTx, _ship_mapper, ses, use_upsert=False)
+        ses.commit()
         # attach error CSV url if any
         if summary["error_rows"] > 0:
             summary["error_csv_url"] = _save_error_csv(summary["errors"])
@@ -2066,6 +2125,7 @@ async def upload_recv_tx(file: UploadDep, ses: SesDep):
         _truncate_tables(ses, ["recv_tx"], restart_identity=True)
         # 3) 挿入
         summary = _generic_insert(df, RecvTx, _recv_mapper, ses, use_upsert=False)
+        ses.commit()
         # attach error CSV url if any
         if summary["error_rows"] > 0:
             summary["error_csv_url"] = _save_error_csv(summary["errors"])
@@ -2085,13 +2145,14 @@ async def upload_recv_tx(file: UploadDep, ses: SesDep):
 # ---------------------------------------------------------------------------
 
 @router.post("/inventory/rebuild_lot_dates")
-def inventory_rebuild_lot_dates(session: Session = Depends(get_session)):
+def inventory_rebuild_lot_dates(session: SesDep):
     """
     Recompute inventory.lot_date for all rows based on text 'lot'.
     Safe to run multiple times.
     """
     try:
         updated = _update_inventory_lot_dates(session)
+        session.commit()
         return {"updated_rows": int(updated)}
     except Exception as e:
         logger.exception("rebuild lot_date failed")
@@ -2100,7 +2161,7 @@ def inventory_rebuild_lot_dates(session: Session = Depends(get_session)):
 
 @router.get("/inventory/preview")
 def inventory_preview(
-    session: Session = Depends(get_session),
+    session: SesDep,
     limit: int = Query(500, ge=1, le=5000),
     offset: int = Query(0, ge=0),
     block_codes: list[str] | None = Query(None),
@@ -2163,7 +2224,7 @@ class AnalysisStartRequest(BaseModel):
     quality_names: list[str] | None = None
 
 @router.post("/analysis/start")
-def analysis_start(req: AnalysisStartRequest, session: Session = Depends(get_session)):
+def analysis_start(req: AnalysisStartRequest, session: SesDep, current_user: CurrentUser):
     # Accept both window_days and rotation_window_days
     wd_in = req.window_days if req.window_days is not None else req.rotation_window_days
     wd = int(wd_in or 0)
@@ -2176,6 +2237,7 @@ def analysis_start(req: AnalysisStartRequest, session: Session = Depends(get_ses
             turnover_window_days=wd,
             block_filter=req.block_codes,
         )
+        session.commit()
         return {
             "updated": int(updated),
             "window_days_requested": int(wd_in or 0),
@@ -2196,7 +2258,7 @@ def analysis_start(req: AnalysisStartRequest, session: Session = Depends(get_ses
 # Compat: robustly call optimizer.plan_relocation regardless of parameter names
 # ---------------------------------------------------------------------------
 
-def _call_plan_relocation_compat(*, cfg, sku_df, inv_df, ship_df, recv_df, location_master_df):
+def _call_plan_relocation_compat(*, cfg, sku_df, inv_df, ship_df, recv_df, location_master_df, block_filter=None, quality_filter=None):
     """Call planner with kwargs filtered/mapped to its signature.
 
     Supports older/newer variants where parameters may be named
@@ -2229,6 +2291,11 @@ def _call_plan_relocation_compat(*, cfg, sku_df, inv_df, ship_df, recv_df, locat
         _bind("ship",       ship_df, ["ship_df", "ship_tx", "ship_tx_df", "shipments", "shipments_df"])  # ship
         _bind("recv",       recv_df, ["recv_df", "recv_tx", "recv_tx_df", "receipts", "receipts_df", "receiving", "receiving_df"])  # recv
         _bind("location_master", location_master_df, ["location_master_df", "loc_master", "locations", "locations_df", "capacity", "capacity_df", "location_capacity"])  # capacity
+        # block_filter / quality_filter を plan_relocation に渡す
+        if block_filter is not None:
+            _bind("block_filter", block_filter, [])
+        if quality_filter is not None:
+            _bind("quality_filter", quality_filter, [])
 
         has_varkw = any(p.kind == pyinspect.Parameter.VAR_KEYWORD for p in params.values())
         if kw or has_varkw:
@@ -2247,6 +2314,8 @@ def _call_plan_relocation_compat(*, cfg, sku_df, inv_df, ship_df, recv_df, locat
             sku_master=sku_df,
             inventory=inv_df,
             cfg=cfg,
+            block_filter=block_filter,
+            quality_filter=quality_filter,
             ai_col_hints={},
             loc_master=location_master_df,
         )
@@ -2278,11 +2347,16 @@ class RelocationStartRequest(BaseModel):
     use_ai_main: bool = False
     rotation_window_days: int = 90
     # --- SKU移動元ロケーション数制限 ---
-    max_source_locs_per_sku: int | None = 2  # 1SKUあたり最大何ロケーションから移動するか（None=無制限）
+    max_source_locs_per_sku: int | None = None  # 1SKUあたり最大何ロケーションから移動するか（None=無制限）
     # --- 連鎖退避の有効化と予算（optimizer.py で実装済みの新機能） ---
     chain_depth: int = 1           # 0=無効, 1..N=最大連鎖段数（デフォルト1=浅い連鎖）
     eviction_budget: int = 50      # 退避移動の総数上限（デフォルト有効）
     touch_budget: int = 100        # 連鎖で触ってよいユニークロケ数の上限（デフォルト有効）
+    # --- パス個別ON/OFF ---
+    enable_pass_consolidate: bool | None = None   # 同一ロット集約
+    enable_pass_fifo: bool | None = None          # FIFO是正（古いロット→取口）
+    enable_pass_zone_swap: bool | None = None     # ゾーンスワップ（入数帯入替）
+    enable_main_loop: bool | None = None          # 段下げ・動線最適化
     # --- 高コストパスのトグル（高速化に有効） ---
     enable_pass0_area_rebalance: bool | None = None  # Trueで帯リバランスを試行
     enable_pass1_swap: bool | None = None            # Trueでスワップ最適化を試行
@@ -2297,6 +2371,9 @@ class RelocationStartRequest(BaseModel):
     depth_preference: str | None = None  # 'front' or 'center'
     center_depth_weight: float | None = None
     promo_quality_keywords: list[str] | None = None  # 例: ["販促資材","販促","什器","資材"]
+    # --- レベル指定 ---
+    pick_levels: list[int] | None = None     # ピッキング対象レベル（Noneで全レベル）
+    storage_levels: list[int] | None = None  # 保管対象レベル（Noneで全レベル）
     # --- trace / debug ---
     trace_id: str | None = None          # Frontend-provided trace id (optional)
     include_debug: bool = False          # If true, include a compact rejection summary in the response
@@ -2304,7 +2381,7 @@ class RelocationStartRequest(BaseModel):
 @router.post("/relocation/start")
 def relocation_start(
     req: RelocationStartRequest,
-    session: Session = Depends(get_session),
+    session: SesDep,
 ):
     # Build optimizer config defensively: avoid passing unsupported kwargs
     try:
@@ -2363,6 +2440,10 @@ def relocation_start(
             setattr(cfg, "far_cols", tuple(int(x) for x in req.far_cols))
         if getattr(req, "promo_quality_keywords", None):
             setattr(cfg, "promo_quality_keywords", tuple(str(x) for x in req.promo_quality_keywords))
+        if getattr(req, "pick_levels", None):
+            setattr(cfg, "pick_levels", tuple(int(x) for x in req.pick_levels))
+        if getattr(req, "storage_levels", None):
+            setattr(cfg, "storage_levels", tuple(int(x) for x in req.storage_levels))
     except Exception:
         pass
     # --- Bind trace id so drop logs match the frontend id ---
@@ -2412,14 +2493,13 @@ def relocation_start(
     except Exception:
         _blocks, _quals = set(), set()
 
-    # Inventory: limit to selected blocks/qualities only (source population)
+    # Inventory: limit to selected blocks only (source population)
+    # 注意: 品質フィルタはここで適用しない。plan_relocation 内部で品質フィルタを
+    # 適用する前に _original_skus_by_loc を構築する必要があるため、
+    # 全品質区分の在庫を plan_relocation に渡す必要がある。
     if not inv_df.empty:
         if _blocks and "ブロック略称" in inv_df.columns:
             inv_df = inv_df[inv_df["ブロック略称"].astype(str).isin(_blocks)]
-        if _quals:
-            qcol = "品質区分名" if "品質区分名" in inv_df.columns else ("quality_name" if "quality_name" in inv_df.columns else None)
-            if qcol:
-                inv_df = inv_df[inv_df[qcol].astype(str).isin(_quals)]
 
     # Location master: destinations must be registered AND receivable
     if not location_master_df.empty:
@@ -2455,6 +2535,8 @@ def relocation_start(
             ship_df=ship_df,
             recv_df=recv_df,
             location_master_df=location_master_df,
+            block_filter=list(_blocks) if _blocks else None,
+            quality_filter=list(_quals) if _quals else None,
         )
     except TypeError as _compat_err:
         try:
@@ -2626,14 +2708,24 @@ def relocation_start(
     except Exception as e:
         logger.warning(f"Failed to cache moves: {e}")
 
+    # summary_reportを取得（sync pathでもレスポンスに含める）
+    try:
+        from app.services.optimizer import get_summary_report as _get_sr, get_last_summary_report as _get_last_sr
+        _sync_summary_report = _get_sr(used_trace_id) if used_trace_id else None
+        if not _sync_summary_report:
+            _sync_summary_report = _get_last_sr()
+    except Exception:
+        _sync_summary_report = None
+
     # Compose response with summary - use normalized dicts instead of raw objects
     return {
         "moves": moves_dicts,
         "trace_id": used_trace_id,
         "rejection_summary": rej,
+        "summary_report": _sync_summary_report,
         "use_ai": req.use_ai,
         "use_ai_main": req.use_ai_main,
-        "count": len(moves) if moves else 0,
+        "count": len(moves_dicts),
         "max_moves": req.max_moves,
         "fill_rate": req.fill_rate,
         "chain_depth": req.chain_depth,
@@ -2653,7 +2745,8 @@ def relocation_start(
 def relocation_start_async(
     req: RelocationStartRequest,
     background_tasks: BackgroundTasks,
-    session: Session = Depends(get_session),
+    session: SesDep,
+    current_user: CurrentUser,
 ):
     """
     Start relocation optimization asynchronously via Celery.
@@ -2668,6 +2761,7 @@ def relocation_start_async(
     from app.services.relocation_tasks import (
         run_relocation_async,
         store_relocation_status,
+        store_relocation_owner,
         set_active_task,
         cancel_task,
     )
@@ -2678,7 +2772,7 @@ def relocation_start_async(
         trace_id = uuid4().hex[:12]
     
     # Cancel previous active task if any
-    previous_task_id = set_active_task(trace_id)
+    previous_task_id = set_active_task(trace_id, tenant_id=current_user.tenant_id)
     if previous_task_id and previous_task_id != trace_id:
         logger.info(f"Cancelling previous task {previous_task_id} in favor of {trace_id}")
         cancel_task(previous_task_id)
@@ -2691,6 +2785,7 @@ def relocation_start_async(
     for _k in (
         "fill_rate", "use_ai", "ai_max_candidates", "require_volume", "use_ai_main",
         "rotation_window_days", "chain_depth", "eviction_budget", "touch_budget",
+        "enable_pass_consolidate", "enable_pass_fifo", "enable_pass_zone_swap", "enable_main_loop",
         "enable_pass0_area_rebalance", "enable_pass1_swap", "pass1_swap_budget_per_group",
         "max_source_locs_per_sku", "pack_low_max", "pack_high_min", "band_pref_weight",
         "depth_preference", "center_depth_weight",
@@ -2701,7 +2796,7 @@ def relocation_start_async(
                 config_dict[_k] = _v
         except Exception:
             pass
-    
+
     # Column band / keyword preferences
     try:
         if getattr(req, "near_cols", None):
@@ -2710,6 +2805,10 @@ def relocation_start_async(
             config_dict["far_cols"] = [int(x) for x in req.far_cols]
         if getattr(req, "promo_quality_keywords", None):
             config_dict["promo_quality_keywords"] = [str(x) for x in req.promo_quality_keywords]
+        if getattr(req, "pick_levels", None):
+            config_dict["pick_levels"] = [int(x) for x in req.pick_levels]
+        if getattr(req, "storage_levels", None):
+            config_dict["storage_levels"] = [int(x) for x in req.storage_levels]
     except Exception:
         pass
     
@@ -2746,14 +2845,13 @@ def relocation_start_async(
         location_master_df = pd.DataFrame()
     
     # Apply filters to inventory
+    # 注意: 品質フィルタはここで適用しない。plan_relocation 内部で品質フィルタを
+    # 適用する前に _original_skus_by_loc を構築する必要があるため、
+    # 全品質区分の在庫を plan_relocation に渡す必要がある。
     if not inv_df.empty:
         if _blocks and "ブロック略称" in inv_df.columns:
             inv_df = inv_df[inv_df["ブロック略称"].astype(str).isin(_blocks)]
-        if _quals:
-            qcol = "品質区分名" if "品質区分名" in inv_df.columns else ("quality_name" if "quality_name" in inv_df.columns else None)
-            if qcol:
-                inv_df = inv_df[inv_df[qcol].astype(str).isin(_quals)]
-    
+
     # Apply filters to location master
     if not location_master_df.empty:
         if "can_receive" in location_master_df.columns:
@@ -2768,8 +2866,9 @@ def relocation_start_async(
     inv_data = inv_df.to_dict(orient="records") if not inv_df.empty else []
     location_master_data = location_master_df.to_dict(orient="records") if not location_master_df.empty else []
     
-    # Store initial status
+    # Store initial status and tenant ownership
     store_relocation_status(trace_id, "queued", {"phase": "queued"})
+    store_relocation_owner(trace_id, current_user.tenant_id)
     
     # Queue Celery task
     try:
@@ -2782,6 +2881,7 @@ def relocation_start_async(
                 "location_master_data": location_master_data,
                 "block_codes": _blocks or None,
                 "quality_names": _quals or None,
+                "tenant_id": current_user.tenant_id,
             },
             task_id=trace_id,  # Use trace_id as Celery task ID
             queue="relocation",
@@ -2804,21 +2904,26 @@ def relocation_start_async(
 # Relocation Status - Get status and results of async task
 # ---------------------------------------------------------------------------
 @router.get("/relocation/status/{trace_id}")
-def relocation_status(trace_id: str):
+def relocation_status(trace_id: str, current_user: CurrentUser):
     """
     Get the status and results of an async relocation task.
-    
+
     Returns:
     - status: "queued", "running", "completed", "failed", "unknown"
     - If completed: full result with moves, summary, rejection_summary
     """
-    from app.services.relocation_tasks import get_relocation_status, get_relocation_result, get_task_status
-    
+    from app.services.relocation_tasks import get_relocation_status, get_relocation_result, get_task_status, get_relocation_owner
+
+    # Tenant ownership check
+    owner = get_relocation_owner(trace_id)
+    if owner is not None and owner != current_user.tenant_id:
+        raise HTTPException(status_code=403, detail="Access denied")
+
     # Try to get result first (if completed)
     result = get_relocation_result(trace_id)
     if result:
         return result
-    
+
     # Otherwise return status
     status = get_task_status(trace_id)
     return {
@@ -2833,12 +2938,33 @@ def relocation_status(trace_id: str):
 # Relocation progress stream (SSE)
 # ---------------------------------------------------------------------------
 @router.get("/relocation/stream")
-async def relocation_progress_stream(trace_id: str | None = Query(None, description="Trace ID to subscribe to")):
+async def relocation_progress_stream(
+    trace_id: str | None = Query(None, description="Trace ID to subscribe to"),
+    token: str | None = Query(None, description="JWT token for SSE auth (EventSource cannot send headers)"),
+):
     """Server-Sent Events stream of relocation progress for a given trace.
 
     If trace_id is omitted, the currently active trace (if any) will be used.
+    Accepts JWT via query parameter because browser EventSource does not support custom headers.
     """
+    # Validate token (mandatory — SSE auth via query param since EventSource cannot send headers)
+    from app.core.security import decode_access_token
+    from jose import JWTError
+    from starlette.responses import JSONResponse
+    if not token:
+        return JSONResponse({"detail": "Token required"}, status_code=401)
+    try:
+        token_payload = decode_access_token(token)
+    except (JWTError, Exception):
+        return JSONResponse({"detail": "Invalid token"}, status_code=401)
     tid = trace_id or (get_current_trace_id() or "")
+    # Tenant ownership check for specific trace_id
+    if tid:
+        from app.services.relocation_tasks import get_relocation_owner
+        tenant_id_from_token = token_payload.get("tid", "")
+        owner = get_relocation_owner(tid)
+        if owner is not None and owner != tenant_id_from_token:
+            return JSONResponse({"detail": "Access denied"}, status_code=403)
     if not tid:
         # Return an empty stream that closes immediately
         return StreamingResponse(iter(()), media_type="text/event-stream")
@@ -2851,18 +2977,180 @@ async def relocation_progress_stream(trace_id: str | None = Query(None, descript
 
 
 # ---------------------------------------------------------------------------
+# Relocation CSV export endpoints
+# ---------------------------------------------------------------------------
+
+def _calc_distance(from_loc, to_loc):
+    """ロケーションコード（8桁数字）からマンハッタン距離を計算する。"""
+    try:
+        f = str(from_loc or '').zfill(8)
+        t = str(to_loc or '').zfill(8)
+        if len(f) == 8 and f.isdigit() and len(t) == 8 and t.isdigit():
+            return abs(int(f[0:3]) - int(t[0:3])) + abs(int(f[3:6]) - int(t[3:6])) + abs(int(f[6:8]) - int(t[6:8]))
+    except Exception:
+        pass
+    return ''
+
+
+@router.get("/relocation/export/moves")
+def relocation_export_moves(
+    trace_id: Optional[str] = None,
+    current_user: CurrentUser = None,
+    session: SesDep = None,  # safety-net用
+):
+    """全移動CSVをダウンロード（safety-net通過済みデータ）"""
+    from app.services.optimizer import get_cached_moves
+
+    # Tenant ownership check
+    if trace_id and current_user:
+        from app.services.relocation_tasks import get_relocation_owner
+        owner = get_relocation_owner(trace_id)
+        if owner is not None and owner != current_user.tenant_id:
+            raise HTTPException(status_code=403, detail="Access denied")
+
+    # まずインメモリキャッシュを試す
+    moves = get_cached_moves(trace_id)
+
+    # インメモリにない場合はRedisから取得（Celeryワーカーが別プロセスの場合）
+    if not moves:
+        try:
+            from app.services.relocation_tasks import get_relocation_result
+            result = get_relocation_result(trace_id) if trace_id else None
+            if result and isinstance(result, dict):
+                moves = result.get("moves")
+        except Exception:
+            pass
+
+    if not moves:
+        raise HTTPException(status_code=404, detail="移動データが見つかりません。先に最適化を実行してください。")
+
+    # plan_relocation の結果は既にenforce_constraints + safety-net通過済み。
+    # CSVエクスポート時に再検証しない（二重検証でDBセッション差異により結果が変わるため）。
+
+    import io, csv
+    output = io.StringIO()
+    writer = csv.writer(output, quoting=csv.QUOTE_ALL)
+
+    header = ['sku_id', 'lot', 'lot_date', 'qty', 'from_loc', 'to_loc',
+              'chain_group_id', 'execution_order', 'distance', 'reason']
+    writer.writerow(header)
+
+    for m in moves:
+        writer.writerow([
+            m.get('sku_id', ''),
+            m.get('lot', ''),
+            m.get('lot_date', ''),
+            m.get('qty', ''),
+            str(m.get('from_loc', '')).zfill(8) if m.get('from_loc') else '',
+            str(m.get('to_loc', '')).zfill(8) if m.get('to_loc') else '',
+            m.get('chain_group_id', ''),
+            m.get('execution_order', ''),
+            m.get('distance') or _calc_distance(m.get('from_loc'), m.get('to_loc')),
+            m.get('reason', ''),
+        ])
+
+    output.seek(0)
+    content = '\ufeff' + output.getvalue()
+    return StreamingResponse(
+        iter([content]),
+        media_type="text/csv",
+        headers={"Content-Disposition": f"attachment; filename=relocation_moves_{trace_id or 'latest'}.csv"}
+    )
+
+
+@router.get("/relocation/export/final-moves")
+def relocation_export_final_moves(
+    trace_id: Optional[str] = None,
+    current_user: CurrentUser = None,
+    session: SesDep = None,  # safety-net用
+):
+    """最終移動CSVをダウンロード（統合・効果順ソート・safety-net検証・通し番号付き）"""
+    from app.services.optimizer import get_cached_moves
+
+    # Tenant ownership check
+    if trace_id and current_user:
+        from app.services.relocation_tasks import get_relocation_owner
+        owner = get_relocation_owner(trace_id)
+        if owner is not None and owner != current_user.tenant_id:
+            raise HTTPException(status_code=403, detail="Access denied")
+
+    # まずインメモリキャッシュを試す
+    moves = get_cached_moves(trace_id)
+
+    # インメモリにない場合はRedisから取得（Celeryワーカーが別プロセスの場合）
+    if not moves:
+        try:
+            from app.services.relocation_tasks import get_relocation_result
+            result = get_relocation_result(trace_id) if trace_id else None
+            if result and isinstance(result, dict):
+                moves = result.get("moves")
+        except Exception:
+            pass
+
+    if not moves:
+        raise HTTPException(status_code=404, detail="移動データが見つかりません。先に最適化を実行してください。")
+
+    final_moves = _consolidate_eviction_chains(moves)
+
+    # plan_relocation の結果は既にenforce_constraints + safety-net通過済み。
+    # CSVエクスポート時に再検証しない（二重検証でDBセッション差異により結果が変わるため）。
+
+    # 作業順を振る
+    for seq_no, move in enumerate(final_moves, start=1):
+        move["work_sequence"] = seq_no
+
+    import io, csv
+    output = io.StringIO()
+    writer = csv.writer(output, quoting=csv.QUOTE_ALL)
+
+    header = ['作業順', 'sku_id', 'lot', 'lot_date', 'qty', 'from_loc', 'to_loc',
+              'chain_group_id', 'execution_order', 'distance', 'reason']
+    writer.writerow(header)
+
+    for m in final_moves:
+        writer.writerow([
+            m.get('work_sequence', ''),
+            m.get('sku_id', ''),
+            m.get('lot', ''),
+            m.get('lot_date', ''),
+            m.get('qty', ''),
+            str(m.get('from_loc', '')).zfill(8) if m.get('from_loc') else '',
+            str(m.get('to_loc', '')).zfill(8) if m.get('to_loc') else '',
+            m.get('chain_group_id', ''),
+            m.get('execution_order', ''),
+            m.get('distance') or _calc_distance(m.get('from_loc'), m.get('to_loc')),
+            m.get('reason', ''),
+        ])
+
+    output.seek(0)
+    content = '\ufeff' + output.getvalue()
+    return StreamingResponse(
+        iter([content]),
+        media_type="text/csv",
+        headers={"Content-Disposition": f"attachment; filename=final_moves_{trace_id or 'latest'}.csv"}
+    )
+
+
+# ---------------------------------------------------------------------------
 # Relocation debug endpoint (latest breakdown and diagnostics)
 # ---------------------------------------------------------------------------
 @router.get("/relocation/debug")
-def relocation_last_debug(trace_id: Optional[str] = None):
+def relocation_last_debug(current_user: CurrentUser, trace_id: Optional[str] = None):
     """
     Return the breakdown of dropped relocation candidates and other debug info
     captured during the most recent relocation planning run.
-    
+
     Args:
         trace_id: Optional trace ID to retrieve specific optimization result.
                   If not provided, returns the latest result.
     """
+    # Tenant ownership check
+    if trace_id:
+        from app.services.relocation_tasks import get_relocation_owner
+        owner = get_relocation_owner(trace_id)
+        if owner is not None and owner != current_user.tenant_id:
+            raise HTTPException(status_code=403, detail="Access denied")
+
     try:
         rej = get_last_rejection_debug() or {}
     except Exception:
@@ -2902,7 +3190,7 @@ def relocation_last_debug(trace_id: Optional[str] = None):
 @router.post("/relocation/score-preview")
 def relocation_score_preview(
     req: RelocationStartRequest,
-    session: Session = Depends(get_session),
+    session: SesDep,
 ):
     """
     全在庫をスコアリングして現状の課題を可視化する（移動指示は生成しない）。
@@ -3090,271 +3378,6 @@ def _df_from_recv(session: Session) -> pd.DataFrame:
 # Capacity audit helper (棚容量 before/after) for relocation moves
 # ---------------------------------------------------------------------------
 CAP_BASE_M3 = 1.3  # 1000mm x 1000mm x 1300mm = 1.3 m^3 per shelf
-
-def _attach_capacity_audit(
-    moves: list[dict],
-    sku_df: pd.DataFrame,
-    inv_df: pd.DataFrame,
-    fill_rate: float,
-) -> list[dict]:
-    """Attach per-move capacity audit (before/after usage in m^3).
-
-    改良点:
-      * ロケーションごとに `location_master.capacity_m3` を参照し、
-        fill_rate を掛けた上限で判定・監査を行う（従来は固定 1.3m3）。
-    """
-    # Build case-volume map: SKU → ケース容積(m3) = volume_m3(単品) × 入数
-    case_volume: dict[str, float] = {}
-    if not sku_df.empty:
-        for _, r in sku_df.iterrows():
-            try:
-                sku = str(r["商品ID"]) if r.get("商品ID") is not None else ""
-                pack = int(r.get("入数", 0) or 0)
-                vol_item = float(r.get("volume_m3", r.get("商品予備項目００６", 0.0)) or 0.0)
-                case_volume[sku] = vol_item * max(pack, 0)
-            except Exception:
-                continue
-
-    # Load per-location capacity map (numeric_id → capacity_m3)
-    try:
-        with Session(engine) as _ses:
-            rows = _ses.exec(_sa_select(LocationMaster.numeric_id, LocationMaster.capacity_m3)).all()
-        cap_map: dict[str, float] = {str(n): float(c or 0.0) for (n, c) in rows if n}
-    except Exception:
-        cap_map = {}
-
-    def _num8(loc: str | None) -> str | None:
-        if not loc:
-            return None
-        s = "".join(ch for ch in str(loc) if ch.isdigit())
-        return s if len(s) == 8 else None
-
-    # Initial shelf occupancy (m3)
-    occ: dict[str, float] = {}
-    if not inv_df.empty:
-        for _, r in inv_df.iterrows():
-            sku = str(r["商品ID"]) if r.get("商品ID") is not None else ""
-            loc = str(r["ロケーション"]) if r.get("ロケーション") is not None else ""
-            cases = float(r.get("cases", 0.0) or 0.0)
-            v_case = case_volume.get(sku, 0.0)
-            if loc:
-                occ[loc] = occ.get(loc, 0.0) + cases * v_case
-
-    enriched: list[dict] = []
-    for m in moves:
-        sku = str(m.get("sku_id", ""))
-        fr = str(m.get("from_loc", ""))
-        to = str(m.get("to_loc", ""))
-        qty = int(m.get("qty") or 0)
-        v_case = case_volume.get(sku, 0.0)
-
-        from_before = occ.get(fr, 0.0)
-        to_before = occ.get(to, 0.0)
-
-        # apply move (for auditing state)
-        occ[fr] = max(0.0, from_before - qty * v_case)
-        occ[to] = to_before + qty * v_case
-
-        # Determine destination cap using per-location capacity
-        num_to = _num8(to)
-        cap_base = cap_map.get(num_to, CAP_BASE_M3)
-        cap_to = float(cap_base) * float(fill_rate)
-
-        mm = {**m}
-        mm["audit"] = {
-            "cap_m3": cap_to,                  # destination cap after fill_rate
-            "case_volume_m3": v_case,
-            "from_before_m3": from_before,
-            "from_after_m3": occ[fr],
-            "to_before_m3": to_before,
-            "to_after_m3": occ[to],
-            "within_cap_to": occ[to] <= cap_to,
-        }
-        enriched.append(mm)
-
-    return enriched
-
-# ---------------------------------------------------------------------------
-# Capacity enforcement (hard cap) + audit
-# ---------------------------------------------------------------------------
-
-def _enforce_capacity_and_attach_audit(
-    moves: list[dict],
-    sku_df: pd.DataFrame,
-    inv_df: pd.DataFrame,
-    fill_rate: float,
-) -> list[dict]:
-    """Greedily drop moves that would overflow destination capacity.
-
-    改良点:
-      * 宛先ロケーションごとに `location_master.capacity_m3` を参照し、
-        fill_rate を掛けた上限で判定する（従来は固定 1.3m3）。
-    """
-    import logging
-    logger = logging.getLogger(__name__)
-    
-    logger.info(f"_enforce_capacity_and_attach_audit: 開始 - 移動数: {len(moves)}, fill_rate: {fill_rate}")
-    # Build case-volume map: SKU → ケース容積(m3) = volume_m3(単品) × 入数
-    case_volume: dict[str, float] = {}
-    if not sku_df.empty:
-        for _, r in sku_df.iterrows():
-            try:
-                sku = str(r["商品ID"]) if r.get("商品ID") is not None else ""
-                pack = int(r.get("入数", 0) or 0)
-                vol_item = float(r.get("volume_m3", r.get("商品予備項目００６", 0.0)) or 0.0)
-                case_volume[sku] = vol_item * max(pack, 0)
-            except Exception:
-                continue
-
-    # Load per-location capacity map (numeric_id → capacity_m3)
-    try:
-        with Session(engine) as _ses:
-            rows = _ses.exec(_sa_select(LocationMaster.numeric_id, LocationMaster.capacity_m3)).all()
-        cap_map: dict[str, float] = {str(n): float(c or 0.0) for (n, c) in rows if n}
-    except Exception:
-        cap_map = {}
-
-    def _num8(loc: str | None) -> str | None:
-        if not loc:
-            return None
-        s = "".join(ch for ch in str(loc) if ch.isdigit())
-        return s if len(s) == 8 else None
-
-    # Initial shelf occupancy (m3)
-    occ: dict[str, float] = {}
-    if not inv_df.empty:
-        for _, r in inv_df.iterrows():
-            sku = str(r["商品ID"]) if r.get("商品ID") is not None else ""
-            loc = str(r["ロケーション"]) if r.get("ロケーション") is not None else ""
-            cases = float(r.get("cases", 0.0) or 0.0)
-            v_case = case_volume.get(sku, 0.0)
-            if loc:
-                occ[loc] = occ.get(loc, 0.0) + cases * v_case
-
-    accepted: list[dict] = []
-    for m in moves:
-        try:
-            sku = str(m.get("sku_id", ""))
-            fr = str(m.get("from_loc", ""))
-            to = str(m.get("to_loc", ""))
-            qty = int(m.get("qty") or 0)
-        except Exception:
-            # Skip malformed rows silently
-            continue
-
-        v_case = case_volume.get(sku, 0.0)
-
-        from_before = occ.get(fr, 0.0)
-        to_before = occ.get(to, 0.0)
-
-        # Prospective state **if** we accepted the move
-        from_after = max(0.0, from_before - qty * v_case)
-        to_after = to_before + qty * v_case
-
-        # Determine destination cap using per-location capacity
-        num_to = _num8(to)
-        cap_base = cap_map.get(num_to, CAP_BASE_M3)
-        cap_to = float(cap_base) * float(fill_rate)
-
-        # Enforce destination hard cap
-        if to_after <= cap_to:
-            # Accept and commit the occupancy change
-            occ[fr] = from_after
-            occ[to] = to_after
-
-            mm = {**m}
-            mm["audit"] = {
-                "cap_m3": cap_to,
-                "case_volume_m3": v_case,
-                "from_before_m3": from_before,
-                "from_after_m3": from_after,
-                "to_before_m3": to_before,
-                "to_after_m3": to_after,
-                "within_cap_to": True,
-            }
-            accepted.append(mm)
-        else:
-            # Reject move; do not mutate occupancy
-            logger.debug(f"移動を拒否: {sku} {fr}→{to} (容量超過) - 移動後容量: {to_after:.3f}m3 > 上限: {cap_to:.3f}m3 (base:{cap_base:.3f} * fill_rate:{fill_rate})")
-            continue
-
-    # --- Priority ordering -------------------------------------------------
-    # 目的:
-    # - 効果が高い（段が下がる、ケース数が多い）移動を先に
-    # - 依存関係（to_loc を空けるために from_loc=to_loc の移動）がある場合は、
-    #   その“空ける側”を先に実行
-    import re
-    import heapq
-
-    def _parse_loc8_tuple(loc: str) -> tuple[int, int, int]:
-        s = str(loc or "").strip()
-        m = re.match(r"^(\d{3})(\d{3})(\d{2})$", s)
-        if not m:
-            return (999, 999, 99)
-        return (int(m.group(1)), int(m.group(2)), int(m.group(3)))
-
-    # まず各移動の効果スコアを見積もる
-    for mm in accepted:
-        try:
-            lv_from, col_from, dep_from = _parse_loc8_tuple(mm.get("from_loc"))
-            lv_to, col_to, dep_to = _parse_loc8_tuple(mm.get("to_loc"))
-            qty = int(mm.get("qty") or 0)
-            # 段の改善を最重要（1段下げ = 1000点）+ ケース数も寄与（1ケース=10点）
-            delta_lv = max(0, lv_from - lv_to)
-            # 取りやすさの微小寄与（奥行き減も僅かに評価）
-            delta_dep = max(0, dep_from - dep_to)
-            effect = 1000 * delta_lv + 10 * qty + 1 * delta_dep
-            mm.setdefault("audit", {})["priority_score"] = float(effect)
-        except Exception:
-            mm.setdefault("audit", {})["priority_score"] = 0.0
-
-    # 依存関係グラフ（k -> m: k が先。条件: k.from_loc == m.to_loc）
-    n = len(accepted)
-    adj: list[list[int]] = [[] for _ in range(n)]
-    indeg: list[int] = [0] * n
-    # インデックスに安定IDを振る
-    idx_map = {i: i for i in range(n)}
-    for j, m in enumerate(accepted):
-        to_loc = str(m.get("to_loc", ""))
-        if not to_loc:
-            continue
-        for i, k in enumerate(accepted):
-            if i == j:
-                continue
-            if str(k.get("from_loc", "")) == to_loc:
-                adj[i].append(j)
-                indeg[j] += 1
-
-    # 優先度付きトポロジカルソート（優先度=priority_score 降順）
-    heap: list[tuple[float, int]] = []
-    for i in range(n):
-        if indeg[i] == 0:
-            pr = float(accepted[i].get("audit", {}).get("priority_score", 0.0))
-            heapq.heappush(heap, (-pr, i))
-
-    ordered: list[int] = []
-    while heap:
-        _neg_pr, u = heapq.heappop(heap)
-        ordered.append(u)
-        for v in adj[u]:
-            indeg[v] -= 1
-            if indeg[v] == 0:
-                pr = float(accepted[v].get("audit", {}).get("priority_score", 0.0))
-                heapq.heappush(heap, (-pr, v))
-
-    # サイクル等で取り切れなかったノードは、効果スコア順で後ろに追加
-    if len(ordered) < n:
-        remain = [i for i in range(n) if i not in set(ordered)]
-        remain.sort(key=lambda i: float(accepted[i].get("audit", {}).get("priority_score", 0.0)), reverse=True)
-        ordered.extend(remain)
-
-    # 並べ替えと sequence 付与
-    accepted_sorted = [accepted[i] for i in ordered]
-    for seq, mm in enumerate(accepted_sorted, start=1):
-        mm.setdefault("audit", {})["sequence"] = int(seq)
-
-    logger.info(f"_enforce_capacity_and_attach_audit: 完了 - 受け入れた移動: {len(accepted)}/{len(moves)}（優先度順に {len(accepted_sorted)} 件）")
-    return accepted_sorted
 
 # --- helper: 列番号から代表ロケーション(8桁)を選ぶ（最小使用量のロケを選択） ---
 _def_col = "column"
@@ -3845,111 +3868,382 @@ def _consolidate_eviction_chains(moves: List[Dict]) -> List[Dict]:
         統合された最終移動のみのリスト
     """
     from collections import defaultdict
-    
-    # SKU+ロット別に移動チェーンを構築
-    chains = defaultdict(list)  # (sku_id, lot) -> [(from_loc, to_loc, move_data)]
-    
-    for move in moves:
-        sku_id = move.get('sku_id')
-        lot = move.get('lot')
-        from_loc = move.get('from_loc')
-        to_loc = move.get('to_loc')
-        
-        key = (sku_id, lot)
-        chains[key].append((from_loc, to_loc, move))
-    
-    # 各チェーンで最初と最後の移動のみを保持
-    final_moves = []
-    
-    for (sku_id, lot), chain in chains.items():
-        if len(chain) == 1:
-            # 単一移動の場合はそのまま
-            final_moves.append(chain[0][2])
+
+    def _group_sort_key(item: tuple[int, Dict]) -> tuple[int, int]:
+        idx, move = item
+        eo = move.get("execution_order")
+        try:
+            eo_num = int(eo)
+        except Exception:
+            eo_num = idx + 1
+        return eo_num, idx
+
+    def _can_consolidate(seq: List[Dict]) -> bool:
+        if len(seq) < 2:
+            return False
+        for prev, cur in zip(seq, seq[1:]):
+            if str(prev.get("to_loc", "")).strip() != str(cur.get("from_loc", "")).strip():
+                return False
+        return True
+
+    grouped_moves: Dict[str, List[Dict]] = defaultdict(list)
+    group_order: List[str] = []
+    for idx, move in enumerate(moves):
+        group_id = move.get("chain_group_id")
+        bucket = f"cg:{group_id}" if group_id else f"single:{idx}"
+        if bucket not in grouped_moves:
+            group_order.append(bucket)
+        grouped_moves[bucket].append(dict(move))
+
+    final_moves: List[Dict] = []
+
+    for bucket in group_order:
+        group = grouped_moves[bucket]
+        has_chain = bool(group and group[0].get("chain_group_id"))
+        ordered_group = [m for _, m in sorted(list(enumerate(group)), key=_group_sort_key)]
+
+        if has_chain:
+            positions_by_key: Dict[tuple, List[int]] = defaultdict(list)
+            for pos, move in enumerate(ordered_group):
+                positions_by_key[(move.get("sku_id"), move.get("lot"))].append(pos)
+
+            removed_positions: set[int] = set()
+            for positions in positions_by_key.values():
+                if len(positions) < 2:
+                    continue
+                seq = [ordered_group[pos] for pos in positions]
+                if not _can_consolidate(seq):
+                    continue
+
+                last_pos = positions[-1]
+                consolidated = dict(ordered_group[last_pos])
+                consolidated["from_loc"] = seq[0].get("from_loc")
+                consolidated["chain_info"] = {
+                    "is_consolidated": True,
+                    "original_steps": len(seq),
+                    "intermediate_locations": [step.get("to_loc") for step in seq[:-1]],
+                }
+                # 統合後の distance を再計算
+                try:
+                    _fl = str(consolidated["from_loc"] or "").zfill(8)
+                    _tl = str(consolidated.get("to_loc") or "").zfill(8)
+                    if len(_fl) == 8 and _fl.isdigit() and len(_tl) == 8 and _tl.isdigit():
+                        _f = (int(_fl[0:3]), int(_fl[3:6]), int(_fl[6:8]))
+                        _t = (int(_tl[0:3]), int(_tl[3:6]), int(_tl[6:8]))
+                        consolidated["distance"] = abs(_f[0]-_t[0]) + abs(_f[1]-_t[1]) + abs(_f[2]-_t[2])
+                except Exception:
+                    pass
+                ordered_group[last_pos] = consolidated
+                removed_positions.update(positions[:-1])
+
+            ordered_group = [
+                move for pos, move in enumerate(ordered_group)
+                if pos not in removed_positions
+            ]
+
+            # --- 玉突きパターン統合 ---
+            # 同一SKU+ロット+qty で move_a.from_loc == move_b.to_loc のペアを統合
+            # 例: #93: A→C (eo=1), #94: B→A (eo=2) → 統合後: B→C (Aは中間地点)
+            # 連鎖する場合があるのでループで繰り返し適用
+            changed = True
+            while changed:
+                changed = False
+                to_loc_idx: Dict[tuple, int] = {}
+                for pos, move in enumerate(ordered_group):
+                    key = (move.get("sku_id"), move.get("lot"), move.get("qty"), str(move.get("to_loc", "")).strip())
+                    to_loc_idx[key] = pos
+
+                billiard_removed: set[int] = set()
+                for pos_a, move_a in enumerate(ordered_group):
+                    if pos_a in billiard_removed:
+                        continue
+                    search_key = (move_a.get("sku_id"), move_a.get("lot"), move_a.get("qty"), str(move_a.get("from_loc", "")).strip())
+                    pos_b = to_loc_idx.get(search_key)
+                    if pos_b is None or pos_b == pos_a or pos_b in billiard_removed:
+                        continue
+                    # 玉突きパターン検出: move_a の出発地 == move_b の目的地
+                    updated = dict(ordered_group[pos_a])
+                    updated["from_loc"] = ordered_group[pos_b].get("from_loc")
+                    # distance を再計算
+                    try:
+                        _fl = str(updated["from_loc"] or "").zfill(8)
+                        _tl = str(updated.get("to_loc") or "").zfill(8)
+                        if len(_fl) == 8 and _fl.isdigit() and len(_tl) == 8 and _tl.isdigit():
+                            _f = (int(_fl[0:3]), int(_fl[3:6]), int(_fl[6:8]))
+                            _t = (int(_tl[0:3]), int(_tl[3:6]), int(_tl[6:8]))
+                            updated["distance"] = abs(_f[0]-_t[0]) + abs(_f[1]-_t[1]) + abs(_f[2]-_t[2])
+                    except Exception:
+                        pass
+                    ordered_group[pos_a] = updated
+                    billiard_removed.add(pos_b)
+                    changed = True
+
+                if billiard_removed:
+                    ordered_group = [move for pos, move in enumerate(ordered_group) if pos not in billiard_removed]
+
+        ordered_group = [
+            move for move in ordered_group
+            if str(move.get("from_loc", "")).strip() != str(move.get("to_loc", "")).strip()
+        ]
+
+        if has_chain:
+            for new_order, move in enumerate(ordered_group, start=1):
+                move["execution_order"] = new_order
+        elif len(ordered_group) == 1 and ordered_group[0].get("chain_group_id"):
+            ordered_group[0]["execution_order"] = 1
+
+        final_moves.extend(ordered_group)
+
+    # --- 効果が高い順にソート ---
+    # 作業が途中で中断されても最大の改善が得られるよう、優先度順に並べる
+    # 1. FIFO是正（古いロットを取口へ）— 出荷品質に直結
+    # 2. ゾーンスワップ（入数帯の是正）— ピッキング効率に直結
+    # 3. エリア是正（Pass-0）— ゾーン配置改善
+    # 4. 集約/圧縮（Pass-2）— 作業効率改善
+    # 5. その他
+    # スワップペアは連続して出力する（chain_group_id でグルーピング維持）
+    def _single_move_priority(move: Dict) -> int:
+        reason = str(move.get("reason") or "").lower()
+        cg = str(move.get("chain_group_id") or "")
+
+        if "fifo" in reason or "古ロット" in reason or "先入先出" in reason or "取口" in reason:
+            return 1
+        elif "ゾーンスワップ" in reason or "zone_swap" in cg:
+            return 2
+        elif "入数帯" in reason or "エリア" in reason or "入口接近" in reason:
+            return 3
+        elif "段下げ" in reason or "大幅段下げ" in reason:
+            return 4
+        elif "集約" in reason or "圧縮" in reason or "手前化" in reason:
+            return 5
+        elif "スワップ" in reason or "swap" in cg:
+            return 1  # FIFOスワップ退避
+        elif "退避" in reason or "evict" in cg:
+            return 6
         else:
-            # 複数移動の場合は最初の移動元と最後の移動先を使用
-            first_from = chain[0][0]
-            last_to = chain[-1][1] 
-            
-            # 最後の移動データをベースに、移動元を修正
-            final_move = chain[-1][2].copy()
-            final_move['from_loc'] = first_from
-            
-            # 中間移動情報を追加
-            final_move['chain_info'] = {
-                'is_consolidated': True,
-                'original_steps': len(chain),
-                'intermediate_locations': [step[1] for step in chain[:-1]]
-            }
-            
-            final_moves.append(final_move)
-    
-    # ------------------------------------------------------------------
-    # Post-consolidation cleanup:
-    # 1. Remove moves where from_loc == to_loc (net zero movement after
-    #    consolidation — the item ends up back where it started)
-    # 2. Renumber execution_order within each chain_group_id from 1
-    # 3. Reorder so that within each chain group the CSV row order
-    #    matches execution_order (evacuators before placers)
-    # ------------------------------------------------------------------
-    
-    # Step 1: Remove self-referencing moves (from_loc == to_loc)
-    before_count = len(final_moves)
-    final_moves = [
-        m for m in final_moves
-        if str(m.get("from_loc", "")).strip() != str(m.get("to_loc", "")).strip()
-    ]
-    removed = before_count - len(final_moves)
-    if removed > 0:
-        import logging
-        logging.getLogger(__name__).info(
-            "consolidation: removed %d self-referencing moves (from_loc == to_loc)", removed
-        )
-    
-    # Step 2: Renumber execution_order within each chain_group_id from 1
-    chain_groups: Dict[str, List[int]] = defaultdict(list)
-    for i, m in enumerate(final_moves):
-        cg = m.get("chain_group_id")
-        if cg:
-            chain_groups[cg].append(i)
-    
-    for cg, indices in chain_groups.items():
-        if len(indices) == 1:
-            # Single-member group: execution_order = 1
-            final_moves[indices[0]]["execution_order"] = 1
+            return 7
+
+    # 同一チェーンのpriority値をチェーン内の最小値（最高優先度）に統一する
+    # depチェーンのメンバーは異なるreasonを持つため、個別計算するとバラバラに散らばる
+    _chain_priority: Dict[str, int] = {}
+    for m in final_moves:
+        cg = str(m.get("chain_group_id") or "")
+        if cg and cg != "nan" and cg != "None":
+            p = _single_move_priority(m)
+            _chain_priority[cg] = min(_chain_priority.get(cg, 99), p)
+
+    def _effect_priority(move: Dict) -> tuple:
+        cg = str(move.get("chain_group_id") or "")
+        eo = int(move.get("execution_order") or 1)
+        # チェーンに属するならチェーン全体の最高優先度を使用
+        if cg and cg in _chain_priority:
+            priority = _chain_priority[cg]
         else:
-            # Multi-member: sort by current execution_order, then renumber from 1
-            indices.sort(key=lambda i: int(final_moves[i].get("execution_order") or 0))
-            for new_order, idx in enumerate(indices, start=1):
-                final_moves[idx]["execution_order"] = new_order
-    
-    # Step 3: Reorder so within each chain group, members appear
-    # consecutively in execution_order sequence
-    reordered: List[Dict] = []
-    emitted_groups: set = set()
-    
+            priority = _single_move_priority(move)
+        # 同一チェーン内は execution_order 順を維持
+        return (priority, cg, eo)
+
+    final_moves.sort(key=_effect_priority)
+
+    # --- チェーン整合性チェック: スワップペアが不完全なら両方除外 ---
+    from collections import Counter as _CCounter
+    _chain_counts = _CCounter()
+    for m in final_moves:
+        _cg = str(m.get("chain_group_id") or "")
+        if _cg and _cg != "nan" and _cg != "None":
+            _chain_counts[_cg] += 1
+    # スワップ系（swap_, fifo_direct_, zone_swap_）は2手でなければ不完全
+    _incomplete_chains = set()
+    for _cg, _cnt in _chain_counts.items():
+        if (_cg.startswith("swap_") or _cg.startswith("fifo_direct_") or _cg.startswith("zone_swap_")) and _cnt != 2:
+            _incomplete_chains.add(_cg)
+    if _incomplete_chains:
+        final_moves = [
+            m for m in final_moves
+            if str(m.get("chain_group_id") or "") not in _incomplete_chains
+        ]
+
+    # --- execution_order 振り直し: チェーン内で連番にする ---
+    _chain_groups: Dict[str, List[Dict]] = {}
+    for m in final_moves:
+        _cg = str(m.get("chain_group_id") or "")
+        if _cg and _cg != "nan" and _cg != "None":
+            _chain_groups.setdefault(_cg, []).append(m)
+    for _cg, _members in _chain_groups.items():
+        _members_sorted = sorted(_members, key=lambda x: int(x.get("execution_order") or 1))
+        for _new_eo, _m in enumerate(_members_sorted, start=1):
+            _m["execution_order"] = _new_eo
+
+    # work_sequence はここでは振らない。
+    # _validate_final_moves_against_inventory (safety-net) で一部の移動が除外されると
+    # 番号が飛ぶため、番号付与は safety-net 通過後に行う。
+
+    return final_moves
+
+
+def _validate_final_moves_against_inventory(
+    final_moves: List[Dict],
+    session,
+) -> List[Dict]:
+    """最終移動リストを DB 全在庫（品質フィルタ前）に対してシミュレーションし、
+    foreign SKU 違反やロット混在違反のある移動をチェーンごと除去する。
+
+    optimize 内部の enforce_constraints / _post_resolution_validate は品質フィルタ後の
+    在庫を使うため、非対象品質の SKU が見えずに違反が漏れる場合がある。
+    この関数は最後の安全ネットとして全在庫を使って検証する。
+    """
+    if not final_moves:
+        return final_moves
+
+    logger = logging.getLogger(__name__)
+
+    # DB から全在庫を取得（品質フィルタなし）
+    inv_df = _df_from_inventory(session)
+    if inv_df.empty:
+        logger.warning("safety-net: inventory is empty, skipping validation")
+        return final_moves
+
+    inv_df["ロケーション"] = inv_df["ロケーション"].astype(str).str.replace('.0', '', regex=False).str.zfill(8)
+    logger.info("safety-net: loaded %d inventory rows, validating %d moves", len(inv_df), len(final_moves))
+
+    # loc → Set[sku] マップ構築（ベクトル化で高速化）
+    sim_skus: Dict[str, set] = {}
+    sim_qty: Dict[tuple, float] = {}
+    _locs = inv_df["ロケーション"].astype(str)
+    _skus = inv_df["商品ID"].astype(str)
+    _qtys = pd.to_numeric(inv_df.get("在庫数(引当数を含む)", pd.Series(dtype=float)), errors="coerce").fillna(0.0)
+    for loc, sku, qty in zip(_locs, _skus, _qtys):
+        sim_skus.setdefault(loc, set()).add(sku)
+        key = (loc, sku)
+        sim_qty[key] = sim_qty.get(key, 0.0) + float(qty)
+
+    # ロット文字列マップ構築
+    sim_lot_strings: Dict[tuple, set] = {}
+    if "ロット" in inv_df.columns:
+        _lots = inv_df["ロット"].astype(str)
+        for loc, sku, lot in zip(_locs, _skus, _lots):
+            if lot and lot != "nan":
+                sim_lot_strings.setdefault((loc, sku), set()).add(lot)
+
+    logger.info("safety-net: built sim_skus=%d locs, sim_lot_strings=%d entries", len(sim_skus), len(sim_lot_strings))
+
+    # スワップチェーン（swap_, fifo_direct_, zone_swap_）をアトミック処理対象として分離
+    _sn_swap_chain_ids: set = set()
+    for m in final_moves:
+        _cg_raw = m.get("chain_group_id")
+        _cg_str = str(_cg_raw) if _cg_raw is not None and not (isinstance(_cg_raw, float) and _cg_raw != _cg_raw) else ""
+        if _cg_str.startswith("swap_") or _cg_str.startswith("fifo_direct_") or _cg_str.startswith("zone_swap_"):
+            _sn_swap_chain_ids.add(_cg_str)
+
+    # シミュレーション: 移動を順に適用し、違反があればチェーンごと除去
+    # ただしスワップチェーンはアトミック（2手セットで状態更新後にチェック）
+    rejected_chains: set = set()
+    accepted_indices: list = []
+
     for i, m in enumerate(final_moves):
-        cg = m.get("chain_group_id")
-        if cg and cg in chain_groups and len(chain_groups[cg]) > 1:
-            if cg not in emitted_groups:
-                # Emit entire group in execution_order sequence at the
-                # position of the earliest original member
-                group_indices = chain_groups[cg]
-                group_indices_sorted = sorted(
-                    group_indices,
-                    key=lambda j: int(final_moves[j].get("execution_order") or 0)
+        to_loc = str(m.get("to_loc") or "").strip().zfill(8)
+        from_loc = str(m.get("from_loc") or "").strip().zfill(8)
+        sku = str(m.get("sku_id") or "")
+        qty = float(m.get("qty") or 0)
+        lot = str(m.get("lot") or "")
+        if lot == "nan" or lot == "None":
+            lot = ""
+        # chain_group_id が NaN の場合を安全に処理
+        _cg_raw = m.get("chain_group_id")
+        cg = str(_cg_raw) if _cg_raw is not None and not (isinstance(_cg_raw, float) and _cg_raw != _cg_raw) else ""
+
+        # 既に却下済みチェーンはスキップ
+        if cg and cg in rejected_chains:
+            continue
+
+        # foreign SKU チェック（スワップチェーンはアトミックチェック）
+        existing = sim_skus.get(to_loc, set())
+        if existing and not existing <= {sku}:
+            if cg in _sn_swap_chain_ids:
+                # スワップペアを探して、ペアの実行後に外来SKUが残らないかチェック
+                _swap_partner = None
+                for j, m2 in enumerate(final_moves):
+                    _m2_cg = str(m2.get("chain_group_id") or "")
+                    if _m2_cg == cg and j != i:
+                        _swap_partner = m2
+                        break
+                if _swap_partner:
+                    # スワップ後の状態: 移動先から partner.sku が退去、自分の sku が到着
+                    _partner_sku = str(_swap_partner.get("sku_id") or "")
+                    _after_skus = set(existing)
+                    _after_skus.discard(_partner_sku)  # パートナーが退去
+                    _after_skus.add(sku)  # 自分が到着
+                    if len(_after_skus) > 1:
+                        # スワップ後も外来SKUが残る → reject
+                        logger.info(
+                            "safety-net: reject foreign_sku (swap atomic) %s->%s after_skus=%s chain=%s",
+                            sku, to_loc, _after_skus, cg,
+                        )
+                        if cg:
+                            rejected_chains.add(cg)
+                        continue
+                    # else: スワップ後は1SKUのみ → OK、passで通過
+                else:
+                    # ペアが見つからない → reject
+                    logger.info(
+                        "safety-net: reject foreign_sku (no swap partner) %s->%s chain=%s",
+                        sku, to_loc, cg,
+                    )
+                    if cg:
+                        rejected_chains.add(cg)
+                    continue
+            else:
+                logger.info(
+                    "safety-net: reject foreign_sku %s->%s (existing=%s) chain=%s",
+                    sku, to_loc, existing - {sku}, cg,
                 )
-                for j in group_indices_sorted:
-                    reordered.append(final_moves[j])
-                emitted_groups.add(cg)
-            # else: already emitted, skip
-        else:
-            reordered.append(m)
-    
-    return reordered
+                if cg:
+                    rejected_chains.add(cg)
+                continue
+
+        # ロット混在チェック（ロット文字列ベース）
+        if lot:
+            lsk = (to_loc, sku)
+            existing_lots = sim_lot_strings.get(lsk, set())
+            if existing_lots and lot not in existing_lots:
+                logger.info(
+                    "safety-net: reject lot_mix %s->%s lot=%s (existing=%s) chain=%s",
+                    sku, to_loc, lot, existing_lots, cg,
+                )
+                if cg:
+                    rejected_chains.add(cg)
+                continue
+
+        # 受理 — 状態更新
+        accepted_indices.append(i)
+        sim_skus.setdefault(to_loc, set()).add(sku)
+        sim_qty[(to_loc, sku)] = sim_qty.get((to_loc, sku), 0.0) + qty
+        sim_qty[(from_loc, sku)] = sim_qty.get((from_loc, sku), 0.0) - qty
+        if sim_qty.get((from_loc, sku), 0.0) <= 0:
+            from_set = sim_skus.get(from_loc)
+            if from_set:
+                from_set.discard(sku)
+                if not from_set:
+                    del sim_skus[from_loc]
+        # ロット文字列状態更新
+        if lot:
+            sim_lot_strings.setdefault((to_loc, sku), set()).add(lot)
+            from_lsk = (from_loc, sku)
+            if from_lsk in sim_lot_strings:
+                sim_lot_strings[from_lsk].discard(lot)
+
+    if rejected_chains:
+        logger.info(
+            "safety-net: rejected %d chains, %d moves removed",
+            len(rejected_chains),
+            len(final_moves) - len(accepted_indices),
+        )
+
+    return [final_moves[i] for i in accepted_indices]
 
 
 @router.post("/relocation/start/final-moves")
-def relocation_start_final_moves(req: RelocationStartRequest, session: Session = Depends(get_session)):
+def relocation_start_final_moves(req: RelocationStartRequest, session: SesDep):
     """
     リロケーション最適化を実行し、エビクションチェーンを統合した最終移動のみを返す。
     
@@ -3976,6 +4270,31 @@ def relocation_start_final_moves(req: RelocationStartRequest, session: Session =
             len(moves), len(final_moves)
         )
 
+        # --- 最終安全ネット: 全在庫（品質フィルタ前）に対して外部SKU/ロット混在を再検証 ---
+        _safety_net_info = {"status": "skipped"}
+        pre_safety_count = len(final_moves)
+        try:
+            final_moves = _validate_final_moves_against_inventory(final_moves, session)
+            _safety_net_info = {
+                "status": "ok",
+                "before": pre_safety_count,
+                "after": len(final_moves),
+                "rejected": pre_safety_count - len(final_moves),
+            }
+            logger.info(
+                "safety-net: %d -> %d moves (rejected %d)",
+                pre_safety_count, len(final_moves), pre_safety_count - len(final_moves),
+            )
+        except Exception as e:
+            import traceback
+            _tb = traceback.format_exc()
+            logger.error("final-moves safety-net validation failed: %s\n%s", e, _tb)
+            _safety_net_info = {"status": "error", "error": str(e)}
+
+        # safety-net 通過後に作業順を振り直す（除外された移動があっても番号が連続する）
+        for seq_no, move in enumerate(final_moves, start=1):
+            move["work_sequence"] = seq_no
+
         consolidated_count = sum(1 for m in final_moves if m.get("chain_info", {}).get("is_consolidated", False))
         efficiency = (len(final_moves) / len(moves) * 100.0) if moves else 100.0
 
@@ -3985,6 +4304,7 @@ def relocation_start_final_moves(req: RelocationStartRequest, session: Session =
             "original_count": len(moves),
             "consolidated_chains": consolidated_count,
             "efficiency_percent": efficiency,
+            "safety_net": _safety_net_info,
             "blocks": base.get("blocks", list(req.block_codes or [])),
             "quality_names": base.get("quality_names", list(req.quality_names or [])),
             "max_moves": base.get("max_moves", req.max_moves),
