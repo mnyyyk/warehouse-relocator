@@ -1184,7 +1184,10 @@ def _compute_rep_pack_by_col_for_inv(inv: pd.DataFrame, pack_map: Optional[pd.Se
 # Post-processing: resolve move dependencies (to_loc/from_loc conflicts)
 # ---------------------------------------------------------------------------
 
-def _resolve_move_dependencies(moves: List[Move]) -> List[Move]:
+def _resolve_move_dependencies(
+    moves: List[Move],
+    original_qty_by_loc_sku: Optional[Dict[Tuple[str, str], float]] = None,
+) -> List[Move]:
     """Resolve execution order dependencies between moves.
 
     If Move A wants to place items at location X, but Move B needs to
@@ -1196,6 +1199,9 @@ def _resolve_move_dependencies(moves: List[Move]) -> List[Move]:
       3. Assigns correct execution_order starting from 1 (evacuate first)
       4. Reorders the list so that within each group, the evacuator
          always appears before the placer in the CSV
+      5. If original_qty_by_loc_sku is provided, detects partial evacuations
+         (evac move qty < loc qty) and rejects the subsequent placer move to
+         avoid multi-SKU mixing at the destination.
 
     Returns a new list of Move objects with updated chain_group_id and
     execution_order where dependencies exist.
@@ -1230,16 +1236,71 @@ def _resolve_move_dependencies(moves: List[Move]) -> List[Move]:
     # reverse: who depends on me
     reverse_deps: Dict[int, set] = defaultdict(set)
 
+    # Track placer indices rejected due to partial evacuation
+    _partial_evac_rejected: Set[int] = set()
+
     for loc, placers in to_loc_index.items():
         evacuators = from_loc_index.get(loc, [])
         for placer_idx in placers:
+            if placer_idx in _partial_evac_rejected:
+                continue
+            placer_move = moves[placer_idx]
             for evac_idx in evacuators:
-                if placer_idx != evac_idx:
-                    # evac must happen before placer
+                if placer_idx == evac_idx:
+                    continue
+                evac_move = moves[evac_idx]
+                # Check for partial evacuation: evac_move leaves SKU behind at from_loc
+                if original_qty_by_loc_sku is not None:
+                    evac_from = str(evac_move.from_loc).zfill(8)
+                    evac_sku = str(evac_move.sku_id)
+                    loc_qty = original_qty_by_loc_sku.get((evac_from, evac_sku), 0.0)
+                    move_qty = float(evac_move.qty)
+                    # 閾値 1e-9: float 精度だけをガード、物理的な残留は全て検出
+                    # (下流の _sim_remaining_qty は `<= 0` で判定するため、残留 > 0 は常に "SKU残留" として扱う)
+                    if loc_qty > move_qty + 1e-9:
+                        # Partial evacuation: evac_move.sku_id will remain at evac_from.
+                        # If placer wants to arrive at evac_from with a different SKU,
+                        # this would cause multi-SKU mixing — reject the placer.
+                        if (str(placer_move.to_loc).zfill(8) == evac_from
+                                and str(placer_move.sku_id) != evac_sku):
+                            _partial_evac_rejected.add(placer_idx)
+                            logger.debug(
+                                f"[dep_resolution] Partial evac reject: placer "
+                                f"{placer_move.sku_id}->{evac_from} blocked by partial evac of "
+                                f"{evac_sku} (loc={loc_qty:.4f}ケース, evac={move_qty:.4f}ケース, "
+                                f"residual={loc_qty - move_qty:.4f}ケース)"
+                            )
+                            break  # no need to check other evacuators for this placer
+                # evac must happen before placer
+                if placer_idx not in _partial_evac_rejected:
                     dep_graph[placer_idx].add(evac_idx)
                     reverse_deps[evac_idx].add(placer_idx)
 
-    if not dep_graph:
+    # Remove rejected placers from dep_graph and reverse_deps (全方向クリーンアップ)
+    if _partial_evac_rejected:
+        logger.warning(
+            f"[dep_resolution] Rejected {len(_partial_evac_rejected)} placer moves due to partial evacuation"
+        )
+        for rej_idx in _partial_evac_rejected:
+            # rej_idx の outgoing edges (dep_graph[rej_idx]) を reverse_deps から除去
+            if rej_idx in dep_graph:
+                for evac_idx in list(dep_graph[rej_idx]):
+                    reverse_deps[evac_idx].discard(rej_idx)
+                del dep_graph[rej_idx]
+            # rej_idx の incoming edges (reverse_deps[rej_idx]) を他ノードの dep_graph から除去
+            if rej_idx in reverse_deps:
+                for dep_idx in list(reverse_deps[rej_idx]):
+                    if dep_idx in dep_graph:
+                        dep_graph[dep_idx].discard(rej_idx)
+                del reverse_deps[rej_idx]
+        # 念のため全ノードの set から rej_idx 群を一括除去 (上記で漏れがあった場合の防御)
+        for _dset in dep_graph.values():
+            _dset.difference_update(_partial_evac_rejected)
+        for _dset in reverse_deps.values():
+            _dset.difference_update(_partial_evac_rejected)
+
+    # dep_graph が空でも、partial-evac reject があれば最終フィルタで moves から除外する必要がある
+    if not dep_graph and not _partial_evac_rejected:
         # No conflicts found
         return moves
 
@@ -1387,6 +1448,15 @@ def _resolve_move_dependencies(moves: List[Move]) -> List[Move]:
         before_cycle_filter = len(final_list)
         final_list = [m for m in final_list if getattr(m, 'chain_group_id', None) not in _cycle_chains]
         logger.warning(f"[optimizer] Cycle filter: removed {before_cycle_filter - len(final_list)} moves in {len(_cycle_chains)} cycle groups")
+
+    # 部分退避でリジェクトされた move を最終出力から除外
+    # identity (id()) ベースで照合することで、同じ (from,to,sku) を持つ別 move を巻き込まないようにする
+    if _partial_evac_rejected:
+        before_rej = len(final_list)
+        _rej_obj_ids = {id(moves[rej_idx]) for rej_idx in _partial_evac_rejected}
+        final_list = [m for m in final_list if id(m) not in _rej_obj_ids]
+        if len(final_list) < before_rej:
+            logger.warning(f"[dep_resolution] Partial evac filter: removed {before_rej - len(final_list)} moves")
 
     return final_list
 
@@ -4828,7 +4898,10 @@ def _pass0_area_rebalance(
         return moves
 
     # 対象抽出：容積>0・移動ケース>0・lot解析済み（厳密でなくてもOK）
-    cand = inv[(inv["volume_each_case"] > 0) & (inv["qty_cases_move"] > 0)].copy()
+    _cand_filter = (inv["volume_each_case"] > 0) & (inv["qty_cases_move"] > 0)
+    if "is_movable" in inv.columns:
+        _cand_filter = _cand_filter & (inv["is_movable"] == True)
+    cand = inv[_cand_filter].copy()
     if cand.empty:
         return moves
 
@@ -5398,10 +5471,13 @@ def _pass0_zone_swaps(
         return "unknown"
 
     # 対象抽出: volume > 0, qty > 0, 移動済みでない
-    cand = inv[
+    _zs_cand_filter = (
         (inv.get("volume_each_case", pd.Series(dtype=float)) > 0)
         & (inv.get("qty_cases_move", pd.Series(dtype=float)) > 0)
-    ].copy()
+    )
+    if "is_movable" in inv.columns:
+        _zs_cand_filter = _zs_cand_filter & (inv["is_movable"] == True)
+    cand = inv[_zs_cand_filter].copy()
     if cand.empty:
         return moves
 
@@ -6302,14 +6378,34 @@ def plan_relocation(
     # フィルタ前の全在庫（全ブロック・全品質）からマップ構築
     # casesベースのqtyマップ（SKU mixing, enforceのqty tracking用）
     _pre_q_cases_src = pd.to_numeric(inventory[_pre_q_qty_col_src], errors="coerce").fillna(0.0) if _pre_q_qty_col_src else pd.Series(0.0, index=inventory.index)
+    # pack_qty 参照マップ (sku_master ベース, floor された cases カラムを信頼せずに正確な case 数を計算する)
+    _pack_lookup_full: Dict[str, float] = {}
+    if sku_master is not None and not sku_master.empty:
+        _sm_key = "sku_id" if "sku_id" in sku_master.columns else "商品ID"
+        _sm_pack_col = "入数" if "入数" in sku_master.columns else ("pack_qty" if "pack_qty" in sku_master.columns else None)
+        if _sm_pack_col:
+            for _sk_raw, _pq_raw in zip(sku_master[_sm_key].astype(str), pd.to_numeric(sku_master[_sm_pack_col], errors="coerce").fillna(0.0)):
+                try:
+                    _pv = float(_pq_raw)
+                    if _pv > 0:
+                        _pack_lookup_full[_sk_raw] = _pv
+                except Exception:
+                    pass
     for _loc_v, _sku_v, _lot_v, _qty_v, _lot_str_v, _cases_v in zip(_pre_q_locs_src, _pre_q_skus_src, _pre_q_lots_src, _pre_q_qtys_src, _pre_q_lot_strs_src, _pre_q_cases_src):
         if float(_qty_v) <= 0:
             continue
         _original_skus_by_loc.setdefault(_loc_v, set()).add(_sku_v)
         _original_lots_by_loc_sku.setdefault((_loc_v, _sku_v), set()).add(int(_lot_v))
-        # casesベース（Moveのqtyと単位を一致させる）
-        # cases=0の場合はqty（在庫数）を使用（pack_qty不明でcasesが計算できなかった在庫）
-        _effective_cases = float(_cases_v) if float(_cases_v) > 0 else 1.0
+        # 正確なケース数: qty(pieces) / pack_qty。
+        # DB の cases フィールドは floor されている可能性があるため信頼しない
+        # (例: qty=464, pack=60 なら実質 7.733 ケースだが cases=7.0 と格納される)。
+        # これにより _resolve_move_dependencies の部分退避検出が誤判定する。
+        _pack_v_full = _pack_lookup_full.get(str(_sku_v), 0.0)
+        if _pack_v_full > 0:
+            _effective_cases = float(_qty_v) / _pack_v_full
+        else:
+            # pack_qty 不明: cases フィールドにフォールバック (従来通り)
+            _effective_cases = float(_cases_v) if float(_cases_v) > 0 else 1.0
         _original_qty_by_loc_sku_full[(_loc_v, _sku_v)] = _original_qty_by_loc_sku_full.get((_loc_v, _sku_v), 0.0) + _effective_cases
         if _lot_str_v and _lot_str_v != "nan":
             _original_lot_strings_by_loc_sku.setdefault((_loc_v, _sku_v), set()).add(_lot_str_v)
@@ -6515,22 +6611,6 @@ def plan_relocation(
         except Exception:
             pass
 
-    # --- 別SKU混在チェック用ケース数マップ（パス前の完全な状態）---
-    # enforce_constraints の _sim_skus_by_loc 更新で、移動元のSKUを除去する際に
-    # 「その(loc,sku)の残ケース数」を正確に追跡する必要がある。
-    # _sim_lots_by_loc_sku はパス後の変異invから構築されるため、
-    # パスで移動済みの行は残ケース=0となり、不正にSKUが除去されてしまうバグがある。
-    # ここでパス前の正確なケース数を保存し enforce_constraints に渡す。
-    _original_qty_by_loc_sku: Dict[Tuple[str, str], float] = {}
-    for _loc_v2, _sku_v2, _qty_v2 in zip(
-        inv["ロケーション"].astype(str).str.replace('.0', '', regex=False).str.zfill(8),
-        inv["商品ID"].astype(str),
-        inv["qty_cases_float"].astype(float),
-    ):
-        _key2 = (_loc_v2, _sku_v2)
-        _original_qty_by_loc_sku[_key2] = _original_qty_by_loc_sku.get(_key2, 0.0) + _qty_v2
-    logger.debug(f"[optimizer] original_qty_by_loc_sku: {len(_original_qty_by_loc_sku)} entries")
-
     # --- バラ数の計算と移動対象フラグ ---
     # 「バラのみ」または「10ケース以下+バラ混在」は移動対象から除外
     # qty: 元の総数量、pack_est: 入数
@@ -6540,7 +6620,7 @@ def plan_relocation(
         inv["_orig_qty"] = pd.to_numeric(inv["在庫数(引当数を含む)"], errors="coerce").fillna(0).astype(int)
     else:
         inv["_orig_qty"] = 0
-    
+
     # 入数を取得（pack_mapがあれば使用、なければinvのpack_qty）
     if pack_map is not None:
         inv["_pack_qty"] = inv["商品ID"].astype(str).map(pack_map).fillna(1.0)
@@ -6549,6 +6629,27 @@ def plan_relocation(
     else:
         inv["_pack_qty"] = 1.0
     inv["_pack_qty"] = inv["_pack_qty"].replace({0.0: 1.0})  # 0除算防止
+
+    # --- 別SKU混在チェック用ケース数マップ（パス前の完全な状態）---
+    # enforce_constraints の _sim_skus_by_loc 更新で、移動元のSKUを除去する際に
+    # 「その(loc,sku)の残ケース数」を正確に追跡する必要がある。
+    # _sim_lots_by_loc_sku はパス後の変異invから構築されるため、
+    # パスで移動済みの行は残ケース=0となり、不正にSKUが除去されてしまうバグがある。
+    # ここでパス前の正確なケース数を保存し enforce_constraints に渡す。
+    # NOTE: qty_cases_float は DB の cases カラム（floor 済み）を優先使用するため
+    # 端数ケースが切り捨てられる。_orig_qty / _pack_qty で正確な float を使う。
+    _original_qty_by_loc_sku: Dict[Tuple[str, str], float] = {}
+    _exact_cases_series = (
+        inv["_orig_qty"].astype(float) / inv["_pack_qty"].astype(float)
+    )
+    for _loc_v2, _sku_v2, _qty_v2 in zip(
+        inv["ロケーション"].astype(str).str.replace('.0', '', regex=False).str.zfill(8),
+        inv["商品ID"].astype(str),
+        _exact_cases_series,
+    ):
+        _key2 = (_loc_v2, _sku_v2)
+        _original_qty_by_loc_sku[_key2] = _original_qty_by_loc_sku.get(_key2, 0.0) + _qty_v2
+    logger.debug(f"[optimizer] original_qty_by_loc_sku: {len(_original_qty_by_loc_sku)} entries")
     
     # 実際のケース数とバラ数を計算
     inv["_actual_cases"] = (inv["_orig_qty"] // inv["_pack_qty"]).astype(int)
@@ -8221,7 +8322,10 @@ def plan_relocation(
 
         # Resolve move dependencies (to_loc/from_loc conflicts)
         try:
-            accepted = _resolve_move_dependencies(accepted)
+            accepted = _resolve_move_dependencies(
+                accepted,
+                original_qty_by_loc_sku=_original_qty_by_loc_sku_full,
+            )
             logger.warning(f"[optimizer] Dependency resolution completed: {len(accepted)} moves")
         except Exception as e:
             logger.debug(f"[optimizer] WARNING: Dependency resolution failed: {e}")
