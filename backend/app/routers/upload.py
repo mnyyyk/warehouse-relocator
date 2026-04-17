@@ -2378,6 +2378,7 @@ class RelocationStartRequest(BaseModel):
     allow_empty_loc_multi_sku: bool | None = None
     multi_sku_level1_vol_cap: float | None = None
     multi_sku_level2_vol_cap: float | None = None
+    enforce_level_vol_cap: bool | None = None
     # --- trace / debug ---
     trace_id: str | None = None          # Frontend-provided trace id (optional)
     include_debug: bool = False          # If true, include a compact rejection summary in the response
@@ -2429,6 +2430,7 @@ def relocation_start(
         "allow_empty_loc_multi_sku",
         "multi_sku_level1_vol_cap",
         "multi_sku_level2_vol_cap",
+        "enforce_level_vol_cap",
     ):
         try:
             _v = getattr(req, _k, None)
@@ -2799,6 +2801,7 @@ def relocation_start_async(
         "depth_preference", "center_depth_weight",
         # --- multi-SKU coexistence knobs ---
         "allow_empty_loc_multi_sku", "multi_sku_level1_vol_cap", "multi_sku_level2_vol_cap",
+        "enforce_level_vol_cap",
     ):
         try:
             _v = getattr(req, _k, None)
@@ -3226,6 +3229,7 @@ def relocation_score_preview(
         "allow_empty_loc_multi_sku",
         "multi_sku_level1_vol_cap",
         "multi_sku_level2_vol_cap",
+        "enforce_level_vol_cap",
     ):
         _v = getattr(req, _k, None)
         if _v is not None:
@@ -3246,7 +3250,7 @@ def relocation_score_preview(
 
     # ロケマスタ取得
     try:
-        lm_rows = session.exec(_sa_select(  # type: ignore[call-overload]
+        lm_rows = session.exec(_sa_select(  # type: ignore
             LocationMaster.block_code,
             LocationMaster.quality_name,
             LocationMaster.level,

@@ -45,6 +45,7 @@ _last_relocation_debug: Dict[str, Any] = {
         "oversize": 0,
         "forbidden": 0,
         "capacity": 0,
+        "level_vol_cap": 0,
         "foreign_sku": 0,
         "lot_mix": 0,
         "fifo": 0,
@@ -56,6 +57,7 @@ _last_relocation_debug: Dict[str, Any] = {
         "oversize": [],
         "forbidden": [],
         "capacity": [],
+        "level_vol_cap": [],
         "foreign_sku": [],
         "lot_mix": [],
         "fifo": [],
@@ -75,6 +77,7 @@ def _dbg_reset(trace_id: Optional[str] = None) -> None:
             "oversize": 0,
             "forbidden": 0,
             "capacity": 0,
+            "level_vol_cap": 0,
             "foreign_sku": 0,
             "lot_mix": 0,
             "fifo": 0,
@@ -86,6 +89,7 @@ def _dbg_reset(trace_id: Optional[str] = None) -> None:
             "oversize": [],
             "forbidden": [],
             "capacity": [],
+            "level_vol_cap": [],
             "foreign_sku": [],
             "lot_mix": [],
             "fifo": [],
@@ -1100,6 +1104,8 @@ class OptimizerConfig:
     multi_sku_target_levels: tuple = (1, 2)
     # 複数SKU同居を許可するchain_group_idプレフィックス集合
     multi_sku_allowed_chain_prefixes: tuple = ("p1fifo", "swap_fifo_", "fifo_direct_", "p0rebal_", "p2consol_")
+    # Lv1/Lv2 着地で段別容積上限を全着地（単独SKU含む）に常時適用
+    enforce_level_vol_cap: bool = True
 
 
 def _select_candidate_moves(
@@ -1768,6 +1774,21 @@ def _get_sku_pack_band(sku_id: str, pack_map: Optional[pd.Series], cfg: "Optimiz
         return "medium"
 
 
+# Lv1/Lv2 only. multi_sku_target_levels gates which levels the cap applies to.
+def _get_level_vol_cap(level: int, cfg: "OptimizerConfig") -> Optional[float]:
+    """Return the per-level volume cap for this level, or None if no cap."""
+    if not getattr(cfg, "enforce_level_vol_cap", True):
+        return None
+    target_levels = getattr(cfg, "multi_sku_target_levels", (1, 2))
+    if level not in target_levels:
+        return None
+    if level == 1:
+        return getattr(cfg, "multi_sku_level1_vol_cap", 0.9)
+    if level == 2:
+        return getattr(cfg, "multi_sku_level2_vol_cap", 0.3)
+    return None
+
+
 def _check_empty_loc_coexistence(
     to_loc: str,
     sku_id: str,
@@ -1796,7 +1817,7 @@ def _check_empty_loc_coexistence(
     existing_skus = sim_skus_by_loc.get(to_loc, set())
     other_skus = existing_skus - {sku_id}
 
-    # 3. 実質1SKU目（他SKUなし）→ 許可
+    # 3. 実質1SKU目（他SKUなし）→ SKU数/pack帯チェック不要、フォールスルー
     if not other_skus:
         return (True, None)
 
@@ -1814,17 +1835,7 @@ def _check_empty_loc_coexistence(
             if other_band != my_band:
                 return (False, "multi_sku_pack_band_mismatch")
 
-    # 6-7. 容積上限チェック（段別）
-    current_vol = sim_vol_by_loc.get(to_loc, 0.0)
-    add_vol = float(qty) * float(pack_vol)
-    if level == 1:
-        vol_cap = float(getattr(cfg, "multi_sku_level1_vol_cap", 0.9))
-        if current_vol + add_vol > vol_cap:
-            return (False, "multi_sku_vol_cap_exceeded")
-    elif level == 2:
-        vol_cap = float(getattr(cfg, "multi_sku_level2_vol_cap", 0.3))
-        if current_vol + add_vol > vol_cap:
-            return (False, "multi_sku_vol_cap_exceeded")
+    # 段別容積上限チェックは capacity ゲート側に統一（全着地に常時適用）
 
     return (True, None)
 
@@ -2139,7 +2150,12 @@ def enforce_constraints(
             _sg_sub_vol_c = float(sku_vol_map.get(_sg_sub_sku_c, 0.0) or 0.0) * float([_sg_m2, _sg_m1][[_sg_m1, _sg_m2].index(_sg_m)].qty)
             _sg_used_c = float(shelf_usage.get(_sg_to_c, 0.0))
             _sg_limit_c = cap_by_loc.get(_sg_to_c, base_cap) if cap_by_loc else base_cap
-            if cfg.hard_cap and (_sg_used_c - _sg_sub_vol_c + _sg_add_vol_c > _sg_limit_c):
+            _sg_net_vol_c = _sg_used_c - _sg_sub_vol_c + _sg_add_vol_c
+            if cfg.hard_cap and (_sg_net_vol_c > _sg_limit_c):
+                _sg_cap_ok = False; break
+            _sg_tlv_c = _parse_loc8(_sg_to_c)[0]
+            _sg_level_cap_c = _get_level_vol_cap(_sg_tlv_c, cfg)
+            if _sg_level_cap_c is not None and _sg_net_vol_c > _sg_level_cap_c:
                 _sg_cap_ok = False; break
         if not _sg_cap_ok:
             _swap_rejected += 2
@@ -2358,6 +2374,11 @@ def enforce_constraints(
         limit_to = cap_by_loc.get(to_loc, base_cap) if cap_by_loc else base_cap
         if cfg.hard_cap and (used_to + add_vol > limit_to):
             _dbg_reject("capacity", _mctx, note=f"used={used_to:.3f}, limit={limit_to:.3f}, add={add_vol:.3f}")
+            continue
+        # 2b) level volume cap gate (Lv1/Lv2 全着地に常時適用、hard_cap 非依存)
+        _level_cap = _get_level_vol_cap(tlv, cfg)
+        if _level_cap is not None and used_to + add_vol > _level_cap:
+            _dbg_reject("level_vol_cap", _mctx, note=f"used={used_to:.3f}, level_cap={_level_cap:.3f}, add={add_vol:.3f}")
             continue
 
         # 2.4) 別SKU混在ゲート —— 移動先に自SKU以外が既にいたら一旦保留（後で再評価）
@@ -2582,6 +2603,10 @@ def enforce_constraints(
             limit_to = cap_by_loc.get(to_loc, base_cap) if cap_by_loc else base_cap
             if cfg.hard_cap and (used_to + add_vol > limit_to):
                 _dbg_reject("capacity", _mctx, note=f"retry: used={used_to:.3f}, limit={limit_to:.3f}")
+                continue
+            _level_cap_r = _get_level_vol_cap(tlv, cfg)
+            if _level_cap_r is not None and used_to + add_vol > _level_cap_r:
+                _dbg_reject("level_vol_cap", _mctx, note=f"retry: used={used_to:.3f}, level_cap={_level_cap_r:.3f}, add={add_vol:.3f}")
                 continue
 
             # 再チェック: foreign_sku
@@ -4669,6 +4694,14 @@ def _evaluate_candidate_location(
     eviction_chain_group_id: Optional[str] = None
     used = float(shelf_usage.get(to_loc, 0.0))
     limit = cap_by_loc.get(to_loc, cap_limit) if cap_by_loc else cap_limit
+    # level volume cap: reject unconditionally (business rule)
+    _cand_level_cap = _get_level_vol_cap(tlv, cfg)
+    if _cand_level_cap is not None and used + need_vol > _cand_level_cap:
+        return _CandidateEvalResult(
+            to_loc=to_loc, target_level=target_level, tcol=tcol, tdep=tdep,
+            score=math.inf, area_needs_mix=False, candidate_ev_chain=[],
+            failure_reason="level_vol_cap"
+        )
     if used + need_vol > limit:
         # Try bounded eviction chain if enabled
         if getattr(cfg, "chain_depth", 0) and getattr(cfg, "eviction_budget", 0) and getattr(cfg, "touch_budget", 0):
@@ -8650,6 +8683,7 @@ def plan_relocation(
             _sn_sim_skus: Dict[str, Set[str]] = {k: set(v) for k, v in _original_skus_by_loc.items()}
             _sn_sim_qty: Dict[Tuple[str, str], float] = dict(_original_qty_by_loc_sku_full)
             _sn_sim_lots: Dict[Tuple[str, str], Set[str]] = {k: set(v) for k, v in _original_lot_strings_by_loc_sku.items()}
+            _sn_sim_vol: Dict[str, float] = dict(shelf_usage)
             _sn_rejected_chains: Set[str] = set()
             _sn_accepted: List[Move] = []
 
@@ -8809,6 +8843,16 @@ def plan_relocation(
                             _sn_rejected_chains.add(cg)
                         continue
 
+                # level volume cap チェック
+                _sn_tlv = _parse_loc8(to_loc)[0]
+                _sn_add_vol = float(sku_vol_map.get(sku, 0.0) or 0.0) * qty
+                _sn_level_cap = _get_level_vol_cap(_sn_tlv, cfg)
+                if _sn_level_cap is not None and _sn_sim_vol.get(to_loc, 0.0) + _sn_add_vol > _sn_level_cap:
+                    logger.debug(f"[safety-net] reject level_vol_cap: {sku}->{to_loc} vol={_sn_sim_vol.get(to_loc, 0.0):.3f}+{_sn_add_vol:.3f} > {_sn_level_cap:.3f} chain={cg}")
+                    if cg:
+                        _sn_rejected_chains.add(cg)
+                    continue
+
                 _sn_accepted.append(m)
                 _sn_sim_skus.setdefault(to_loc, set()).add(sku)
                 _sn_sim_qty[(to_loc, sku)] = _sn_sim_qty.get((to_loc, sku), 0.0) + qty
@@ -8824,6 +8868,8 @@ def plan_relocation(
                     _from_lsk = (from_loc, sku)
                     if _from_lsk in _sn_sim_lots:
                         _sn_sim_lots[_from_lsk].discard(lot)
+                _sn_sim_vol[to_loc] = _sn_sim_vol.get(to_loc, 0.0) + _sn_add_vol
+                _sn_sim_vol[from_loc] = max(0.0, _sn_sim_vol.get(from_loc, 0.0) - _sn_add_vol)
 
             accepted = _sn_accepted
             _sn_rejected = _pre_count - len(accepted)

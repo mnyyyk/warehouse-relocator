@@ -164,18 +164,18 @@ class TestCheckEmptyLocCoexistence:
     # テスト3: 容積上限超過で却下
     # ------------------------------------------------------------------
     def test_case3_vol_cap_exceeded_lv1(self):
-        """Lv1の容積上限(0.9㎥)を超えると却下"""
+        """段別容積上限は capacity ゲート側で処理（全着地に常時適用）。
+        _check_empty_loc_coexistence は SKU数/pack帯チェックのみ行い、容積チェックは行わない。"""
         cfg = _make_cfg(multi_sku_level1_vol_cap=0.9, multi_sku_target_levels=(1, 2))
         loc = "00100100"
         empty = {loc}
         sim_skus = {loc: {"SKU_A", "SKU_B"}}
-        sim_vol = {loc: 0.85}  # 残り0.05しかない
+        sim_vol = {loc: 0.85}
         band = {"SKU_A": "medium", "SKU_B": "medium", "SKU_C": "medium"}
 
-        # qty=1, pack_vol=0.1 → 追加後0.95 > 0.9 → 却下
+        # この関数では容積チェックをしない（capacity ゲートに委譲）→ 許可
         allowed, reason = _call_check(loc, "SKU_C", 1, 0.1, empty, sim_skus, sim_vol, band, 1, cfg)
-        assert allowed is False
-        assert reason == "multi_sku_vol_cap_exceeded"
+        assert allowed is True, f"容積チェックは capacity ゲートに委譲されたため許可されるべき: {reason}"
 
     def test_case3_vol_cap_boundary_lv1(self):
         """Lv1の容積上限境界値（ちょうど0.9㎥）→ 許可"""
@@ -191,7 +191,8 @@ class TestCheckEmptyLocCoexistence:
         assert allowed is True, f"境界値はちょうど通るべき: {reason}"
 
     def test_case3_vol_cap_exceeded_lv2(self):
-        """Lv2の容積上限(0.3㎥)を超えると却下"""
+        """段別容積上限は capacity ゲート側で処理（全着地に常時適用）。
+        _check_empty_loc_coexistence は SKU数/pack帯チェックのみ行い、容積チェックは行わない。"""
         cfg = _make_cfg(multi_sku_level2_vol_cap=0.3, multi_sku_target_levels=(1, 2))
         loc = "00200100"  # Lv2
         empty = {loc}
@@ -199,10 +200,9 @@ class TestCheckEmptyLocCoexistence:
         sim_vol = {loc: 0.25}
         band = {"SKU_A": "medium", "SKU_B": "medium", "SKU_C": "medium"}
 
-        # qty=1, pack_vol=0.1 → 追加後0.35 > 0.3 → 却下
+        # この関数では容積チェックをしない（capacity ゲートに委譲）→ 許可
         allowed, reason = _call_check(loc, "SKU_C", 1, 0.1, empty, sim_skus, sim_vol, band, 2, cfg)
-        assert allowed is False
-        assert reason == "multi_sku_vol_cap_exceeded"
+        assert allowed is True, f"容積チェックは capacity ゲートに委譲されたため許可されるべき: {reason}"
 
     # ------------------------------------------------------------------
     # テスト4: 異pack帯SKUの混在で却下
@@ -570,23 +570,21 @@ class TestMultiSkuReviewerFixes:
     # （W-2 回帰防止: 複数 move 間で容積追跡が正しく機能することを確認）
     # ------------------------------------------------------------------
     def test_r2_sequential_vol_tracking_across_moves(self):
-        """複数 move 間で _sim_vol_by_loc が累積更新され、容積超過を正しく却下する"""
-        # 手順:
-        # 1. SKU_B → target_loc（p2consol_, 許可）: 容積0.5追加 → 受理
-        # 2. SKU_C → target_loc（p2consol_, 許可）: 容積0.5追加 → 合計1.0 > cap0.9 → 却下
-        # move 間で _sim_vol_by_loc が累積更新されていれば SKU_C は容積超過で却下される
+        """複数 move 間で shelf_usage が累積更新され、容積超過を正しく却下する
 
+        段別容積上限は capacity ゲートで管理（全着地に常時適用）。
+        1件目 (0.5㎥) は 0.5 ≤ 0.9 で受理、2件目 (0.5㎥) は累積1.0 > 0.9 で却下。
+        target_loc は元々空き（shelf_usage=0）。
+        """
         sku_master = _make_sku_master([
-            {"sku_id": "SKU_A", "pack_qty": 30, "vol_m3": 0.5},
             {"sku_id": "SKU_B", "pack_qty": 30, "vol_m3": 0.5},
             {"sku_id": "SKU_C", "pack_qty": 30, "vol_m3": 0.5},
         ])
+        target_loc = "00100100"
         inv = _make_inv([
-            {"sku": "SKU_A", "lot": "LA1", "lot_key": 20250101, "loc": "00100100", "qty": 1, "vol_each": 0.5},
             {"sku": "SKU_B", "lot": "LB1", "lot_key": 20250101, "loc": "00301002", "qty": 1, "vol_each": 0.5},
             {"sku": "SKU_C", "lot": "LC1", "lot_key": 20250101, "loc": "00301003", "qty": 1, "vol_each": 0.5},
         ])
-        target_loc = "00100100"
 
         cfg = _make_cfg(
             allow_empty_loc_multi_sku=True,
@@ -596,10 +594,11 @@ class TestMultiSkuReviewerFixes:
             multi_sku_pack_band_match=False,
             multi_sku_target_levels=(1, 2),
             multi_sku_allowed_chain_prefixes=("p2consol_",),
+            enforce_level_vol_cap=True,
         )
         original_empty_locs = {target_loc}
         original_skus_by_loc = {
-            target_loc: set(),  # 元々空き
+            target_loc: set(),  # 元々空き（SKUなし）
             "00301002": {"SKU_B"},
             "00301003": {"SKU_C"},
         }
@@ -608,8 +607,9 @@ class TestMultiSkuReviewerFixes:
             ("00301003", "SKU_C"): 1.0,
         }
 
-        # SKU_B と SKU_C を target_loc に送る（メインループで連続処理）。
-        # SKU_B: 0.5㎥ → 受理, SKU_C: 0.5㎥ → 合計1.0㎥ > cap 0.9㎥ → 却下
+        # SKU_B と SKU_C を target_loc（Lv1、cap 0.9㎥）に送る。
+        # SKU_B: used=0 + 0.5 = 0.5 ≤ 0.9 → 受理
+        # SKU_C: used=0.5 + 0.5 = 1.0 > 0.9 → 却下
         moves = [
             _make_move("SKU_B", "LB1", 1, "00301002", target_loc, chain_group_id="p2consol_001", execution_order=1),
             _make_move("SKU_C", "LC1", 1, "00301003", target_loc, chain_group_id="p2consol_002", execution_order=2),
@@ -622,7 +622,6 @@ class TestMultiSkuReviewerFixes:
             original_qty_by_loc_sku=original_qty,
         )
 
-        # 受理は1件のみ（容積追跡が正常なら2件目は超過で却下）
         accepted_to_target = [m for m in result if str(m.to_loc).zfill(8) == target_loc]
         assert len(accepted_to_target) == 1, (
             f"容積 0.5+0.5=1.0 > cap 0.9 のため2件目は却下されるべき。受理={len(accepted_to_target)}件"
