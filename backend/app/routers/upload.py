@@ -2374,6 +2374,10 @@ class RelocationStartRequest(BaseModel):
     # --- レベル指定 ---
     pick_levels: list[int] | None = None     # ピッキング対象レベル（Noneで全レベル）
     storage_levels: list[int] | None = None  # 保管対象レベル（Noneで全レベル）
+    # --- 複数SKU同居ルール（空きロケへの段別許可） ---
+    allow_empty_loc_multi_sku: bool | None = None
+    multi_sku_level1_vol_cap: float | None = None
+    multi_sku_level2_vol_cap: float | None = None
     # --- trace / debug ---
     trace_id: str | None = None          # Frontend-provided trace id (optional)
     include_debug: bool = False          # If true, include a compact rejection summary in the response
@@ -2421,6 +2425,10 @@ def relocation_start(
         # --- depth preference knobs ---
         "depth_preference",
         "center_depth_weight",
+        # --- multi-SKU coexistence knobs ---
+        "allow_empty_loc_multi_sku",
+        "multi_sku_level1_vol_cap",
+        "multi_sku_level2_vol_cap",
     ):
         try:
             _v = getattr(req, _k, None)
@@ -2434,15 +2442,15 @@ def relocation_start(
     setattr(cfg, "quality_names", req.quality_names)
     # Column band / keyword preferences that need type adaptation
     try:
-        if getattr(req, "near_cols", None):
+        if req.near_cols:
             setattr(cfg, "near_cols", tuple(int(x) for x in req.near_cols))
-        if getattr(req, "far_cols", None):
+        if req.far_cols:
             setattr(cfg, "far_cols", tuple(int(x) for x in req.far_cols))
-        if getattr(req, "promo_quality_keywords", None):
+        if req.promo_quality_keywords:
             setattr(cfg, "promo_quality_keywords", tuple(str(x) for x in req.promo_quality_keywords))
-        if getattr(req, "pick_levels", None):
+        if req.pick_levels:
             setattr(cfg, "pick_levels", tuple(int(x) for x in req.pick_levels))
-        if getattr(req, "storage_levels", None):
+        if req.storage_levels:
             setattr(cfg, "storage_levels", tuple(int(x) for x in req.storage_levels))
     except Exception:
         pass
@@ -2789,6 +2797,8 @@ def relocation_start_async(
         "enable_pass0_area_rebalance", "enable_pass1_swap", "pass1_swap_budget_per_group",
         "max_source_locs_per_sku", "pack_low_max", "pack_high_min", "band_pref_weight",
         "depth_preference", "center_depth_weight",
+        # --- multi-SKU coexistence knobs ---
+        "allow_empty_loc_multi_sku", "multi_sku_level1_vol_cap", "multi_sku_level2_vol_cap",
     ):
         try:
             _v = getattr(req, _k, None)
@@ -2799,15 +2809,15 @@ def relocation_start_async(
 
     # Column band / keyword preferences
     try:
-        if getattr(req, "near_cols", None):
+        if req.near_cols:
             config_dict["near_cols"] = [int(x) for x in req.near_cols]
-        if getattr(req, "far_cols", None):
+        if req.far_cols:
             config_dict["far_cols"] = [int(x) for x in req.far_cols]
-        if getattr(req, "promo_quality_keywords", None):
+        if req.promo_quality_keywords:
             config_dict["promo_quality_keywords"] = [str(x) for x in req.promo_quality_keywords]
-        if getattr(req, "pick_levels", None):
+        if req.pick_levels:
             config_dict["pick_levels"] = [int(x) for x in req.pick_levels]
-        if getattr(req, "storage_levels", None):
+        if req.storage_levels:
             config_dict["storage_levels"] = [int(x) for x in req.storage_levels]
     except Exception:
         pass
@@ -3212,16 +3222,20 @@ def relocation_score_preview(
         "band_pref_weight",
         "depth_preference",
         "center_depth_weight",
+        # --- multi-SKU coexistence knobs ---
+        "allow_empty_loc_multi_sku",
+        "multi_sku_level1_vol_cap",
+        "multi_sku_level2_vol_cap",
     ):
         _v = getattr(req, _k, None)
         if _v is not None:
             setattr(cfg, _k, _v)
     try:
-        if getattr(req, "near_cols", None):
+        if req.near_cols:
             setattr(cfg, "near_cols", tuple(int(x) for x in req.near_cols))
-        if getattr(req, "far_cols", None):
+        if req.far_cols:
             setattr(cfg, "far_cols", tuple(int(x) for x in req.far_cols))
-        if getattr(req, "promo_quality_keywords", None):
+        if req.promo_quality_keywords:
             setattr(cfg, "promo_quality_keywords", tuple(str(x) for x in req.promo_quality_keywords))
     except Exception:
         pass
@@ -3232,7 +3246,7 @@ def relocation_score_preview(
 
     # ロケマスタ取得
     try:
-        lm_rows = session.exec(_sa_select(
+        lm_rows = session.exec(_sa_select(  # type: ignore[call-overload]
             LocationMaster.block_code,
             LocationMaster.quality_name,
             LocationMaster.level,

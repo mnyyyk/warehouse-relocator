@@ -1089,6 +1089,18 @@ class OptimizerConfig:
     # 最も古いロットのロケーションを優先的に選択
     max_source_locs_per_sku: Optional[int] = None
 
+    # --- 元々空きだったロケへの複数SKU同居許可設定 ---
+    # 元々複数SKU混在のロケは従来通り一切触らない（L6518-6562 のロジック維持）
+    # 元々空きだったロケに限り、段別ルールで複数SKU同居を許可する
+    allow_empty_loc_multi_sku: bool = True
+    multi_sku_max_per_loc: int = 3
+    multi_sku_level1_vol_cap: float = 0.9
+    multi_sku_level2_vol_cap: float = 0.3
+    multi_sku_pack_band_match: bool = True
+    multi_sku_target_levels: tuple = (1, 2)
+    # 複数SKU同居を許可するchain_group_idプレフィックス集合
+    multi_sku_allowed_chain_prefixes: tuple = ("p1fifo", "swap_fifo_", "fifo_direct_", "p0rebal_", "p2consol_")
+
 
 def _select_candidate_moves(
     moves_with_meta: List[Tuple[Move, int, float]],
@@ -1735,6 +1747,88 @@ def _post_resolution_validate(
     return current_moves
 
 
+def _get_sku_pack_band(sku_id: str, pack_map: Optional[pd.Series], cfg: "OptimizerConfig") -> str:
+    """SKUの入数からpack帯("small"/"medium"/"large")を返す。"""
+    if pack_map is None:
+        return "medium"
+    try:
+        pack_val = pack_map.get(sku_id)
+        if pack_val is None or pd.isna(pack_val):
+            return "medium"
+        pack = float(pack_val)
+        low_max = int(getattr(cfg, "pack_low_max", 12))
+        high_min = int(getattr(cfg, "pack_high_min", 50))
+        if pack <= low_max:
+            return "small"
+        elif pack >= high_min:
+            return "large"
+        else:
+            return "medium"
+    except Exception:
+        return "medium"
+
+
+def _check_empty_loc_coexistence(
+    to_loc: str,
+    sku_id: str,
+    qty: int,
+    pack_vol: float,
+    original_empty_locs: Set[str],
+    sim_skus_by_loc: Dict[str, Set[str]],
+    sim_vol_by_loc: Dict[str, float],
+    sku_pack_band: Dict[str, str],
+    level: int,
+    cfg: "OptimizerConfig",
+) -> Tuple[bool, Optional[str]]:
+    """元々空きだったロケへの複数SKU同居ゲート。
+
+    Returns (allowed, reject_reason). reject_reason is None if allowed.
+    """
+    # 1. 元々空きロケでなければ従来ロジックに委ねる（フォールスルー）
+    if to_loc not in original_empty_locs:
+        return (False, None)
+
+    # 2. 対象段でなければ却下
+    target_levels = tuple(getattr(cfg, "multi_sku_target_levels", (1, 2)))
+    if level not in target_levels:
+        return (False, "multi_sku_level_disallowed")
+
+    existing_skus = sim_skus_by_loc.get(to_loc, set())
+    other_skus = existing_skus - {sku_id}
+
+    # 3. 実質1SKU目（他SKUなし）→ 許可
+    if not other_skus:
+        return (True, None)
+
+    # 4. 同居後のSKU数チェック
+    max_per_loc = int(getattr(cfg, "multi_sku_max_per_loc", 3))
+    after_count = len(existing_skus | {sku_id})
+    if after_count > max_per_loc:
+        return (False, "multi_sku_count_exceeded")
+
+    # 5. pack帯一致チェック
+    if getattr(cfg, "multi_sku_pack_band_match", True):
+        my_band = sku_pack_band.get(sku_id, "medium")
+        for other_sku in other_skus:
+            other_band = sku_pack_band.get(other_sku, "medium")
+            if other_band != my_band:
+                return (False, "multi_sku_pack_band_mismatch")
+
+    # 6-7. 容積上限チェック（段別）
+    current_vol = sim_vol_by_loc.get(to_loc, 0.0)
+    add_vol = float(qty) * float(pack_vol)
+    if level == 1:
+        vol_cap = float(getattr(cfg, "multi_sku_level1_vol_cap", 0.9))
+        if current_vol + add_vol > vol_cap:
+            return (False, "multi_sku_vol_cap_exceeded")
+    elif level == 2:
+        vol_cap = float(getattr(cfg, "multi_sku_level2_vol_cap", 0.3))
+        if current_vol + add_vol > vol_cap:
+            return (False, "multi_sku_vol_cap_exceeded")
+
+    return (True, None)
+
+
 def enforce_constraints(
     sku_master: pd.DataFrame,
     inventory: pd.DataFrame,
@@ -1747,6 +1841,7 @@ def enforce_constraints(
     blocked_dest_locs: Optional[Set[str]] = None,
     blocked_source_locs: Optional[Set[str]] = None,
     original_inv_lot_levels: Optional[Dict[Tuple[str, int], list]] = None,
+    original_empty_locs: Optional[Set[str]] = None,
 ) -> List[Move]:
     """
     外部(例: AIドラフト)で生成された移動候補に対し、
@@ -1901,6 +1996,19 @@ def enforce_constraints(
             _grp_g["lot_key"].astype(int).tolist(),
             _grp_g["lv"].astype(int).tolist(),
         ))
+
+    # 複数SKU同居用: ロケ別シミュ容積マップ（O(1)更新用）
+    # shelf_usage をベースに初期化（enforce内でも同じ値から開始）
+    _sim_vol_by_loc: Dict[str, float] = dict(shelf_usage)
+
+    # 複数SKU同居用: SKU → pack帯マップ（事前構築）
+    _sku_pack_band_map: Dict[str, str] = {}
+    if pack_map is not None:
+        for _pb_sku in pack_map.index:
+            _sku_pack_band_map[str(_pb_sku)] = _get_sku_pack_band(str(_pb_sku), pack_map, cfg)
+
+    # 元々空きだったロケ集合（外部から渡された場合はそのまま使用）
+    _original_empty_locs_enforce: Set[str] = original_empty_locs if original_empty_locs is not None else set()
 
     # 入力movesをチェーン内execution_order順にソートして退避が先に処理されるようにする
     # これにより部分退避後のforeign_skuチェックが正しく動作する
@@ -2120,6 +2228,8 @@ def enforce_constraints(
             ))
             shelf_usage[_sg_to_a] = shelf_usage.get(_sg_to_a, 0.0) + _sg_add_vol_a
             shelf_usage[_sg_from_a] = max(0.0, shelf_usage.get(_sg_from_a, 0.0) - _sg_add_vol_a)
+            _sim_vol_by_loc[_sg_to_a] = _sim_vol_by_loc.get(_sg_to_a, 0.0) + _sg_add_vol_a
+            _sim_vol_by_loc[_sg_from_a] = max(0.0, _sim_vol_by_loc.get(_sg_from_a, 0.0) - _sg_add_vol_a)
             _sg_to_key_fc = (_sg_sku_a, int(_sg_tcol))
             _sim_inv_by_sku_col.setdefault(_sg_to_key_fc, []).append((int(_sg_lot_key_a), int(_sg_tlv)))
             _sg_from_key_fc = (_sg_sku_a, int(_sg_fcol))
@@ -2230,11 +2340,18 @@ def enforce_constraints(
             continue
 
         # 2c) 移動先衝突ゲート: 他チェーンが既にこのto_locを確保済みなら却下
+        # 例外: 複数SKU同居が許可されるパス（p1fifo等）かつ元々空きロケは通過させる
         _this_cg = getattr(m, 'chain_group_id', None) or ""
         _dest_owner = _dest_claimed_by.get(to_loc)
         if _dest_owner is not None and _dest_owner != _this_cg:
-            _dbg_reject("dest_conflict", _mctx, note=f"to_loc={to_loc} already claimed by chain {_dest_owner}")
-            continue
+            _dest_conflict_bypass = False
+            if getattr(cfg, "allow_empty_loc_multi_sku", True) and to_loc in _original_empty_locs_enforce:
+                _dcb_prefixes = tuple(getattr(cfg, "multi_sku_allowed_chain_prefixes",
+                    ("p1fifo", "swap_fifo_", "fifo_direct_", "p0rebal_", "p2consol_")))
+                _dest_conflict_bypass = bool(_this_cg and any(_this_cg.startswith(p) for p in _dcb_prefixes))
+            if not _dest_conflict_bypass:
+                _dbg_reject("dest_conflict", _mctx, note=f"to_loc={to_loc} already claimed by chain {_dest_owner}")
+                continue
 
         # 2) capacity gate (per-location if provided)
         used_to = float(shelf_usage.get(to_loc, 0.0))
@@ -2245,9 +2362,43 @@ def enforce_constraints(
 
         # 2.4) 別SKU混在ゲート —— 移動先に自SKU以外が既にいたら一旦保留（後で再評価）
         _existing_skus_at_dest = _sim_skus_by_loc.get(to_loc, set())
-        if _existing_skus_at_dest and not _existing_skus_at_dest <= {sku}:
-            _deferred_foreign_sku.append(m)
-            continue
+        _foreign_sku_present = bool(_existing_skus_at_dest and not _existing_skus_at_dest <= {sku})
+        if _foreign_sku_present:
+            _is_allowed_pass = False
+            if getattr(cfg, "allow_empty_loc_multi_sku", True):
+                _this_cg_multi = getattr(m, 'chain_group_id', None) or ""
+                _allowed_prefixes = tuple(getattr(cfg, "multi_sku_allowed_chain_prefixes",
+                    ("p1fifo", "swap_fifo_", "fifo_direct_", "p0rebal_", "p2consol_")))
+                _is_allowed_pass = bool(_this_cg_multi and any(
+                    _this_cg_multi.startswith(p) for p in _allowed_prefixes
+                ))
+            if _is_allowed_pass:
+                _coex_allowed, _coex_reason = _check_empty_loc_coexistence(
+                    to_loc=to_loc,
+                    sku_id=sku,
+                    qty=int(m.qty),
+                    pack_vol=float(sku_vol_map.get(sku, 0.0) or 0.0),
+                    original_empty_locs=_original_empty_locs_enforce,
+                    sim_skus_by_loc=_sim_skus_by_loc,
+                    sim_vol_by_loc=_sim_vol_by_loc,
+                    sku_pack_band=_sku_pack_band_map,
+                    level=tlv,
+                    cfg=cfg,
+                )
+                if not _coex_allowed:
+                    if _coex_reason is None:
+                        # フォールスルー: 従来のforeign_sku保留に委ねる
+                        _deferred_foreign_sku.append(m)
+                        continue
+                    else:
+                        logger.debug(f"[enforce] multi_sku coexistence rejected: {_coex_reason} sku={sku} to={to_loc}")
+                        _dbg_reject("foreign_sku", _mctx, note=f"multi_sku_coex: {_coex_reason}")
+                        continue
+                # 許可: 続けてロット混在チェック等を実行
+                logger.debug(f"[enforce] multi_sku coexistence allowed: sku={sku} to={to_loc} existing={_existing_skus_at_dest}")
+            else:
+                _deferred_foreign_sku.append(m)
+                continue
 
         # 2.5) Fix2: ロット混在ゲート —— 同一SKU・異なるロットが同一ロケに混在するのを防ぐ
         # lot_key ベースのチェック（移動元が既知ロットの場合のみ）
@@ -2322,6 +2473,9 @@ def enforce_constraints(
         ))
         shelf_usage[to_loc] = shelf_usage.get(to_loc, 0.0) + add_vol
         shelf_usage[from_loc] = max(0.0, shelf_usage.get(from_loc, 0.0) - add_vol)
+        # _sim_vol_by_loc を逐次更新（複数SKU同居の容積チェック用）
+        _sim_vol_by_loc[to_loc] = _sim_vol_by_loc.get(to_loc, 0.0) + add_vol
+        _sim_vol_by_loc[from_loc] = max(0.0, _sim_vol_by_loc.get(from_loc, 0.0) - add_vol)
         # 移動先を登録
         if _this_cg:
             _dest_claimed_by[to_loc] = _this_cg
@@ -2484,6 +2638,9 @@ def enforce_constraints(
             # シミュレーション状態更新
             shelf_usage[to_loc] = shelf_usage.get(to_loc, 0.0) + add_vol
             shelf_usage[from_loc] = max(0.0, shelf_usage.get(from_loc, 0.0) - add_vol)
+            # _max_retry=0 のため現在はデッドコードだが、将来リトライ有効化時に備えて同期更新
+            _sim_vol_by_loc[to_loc] = _sim_vol_by_loc.get(to_loc, 0.0) + add_vol
+            _sim_vol_by_loc[from_loc] = max(0.0, _sim_vol_by_loc.get(from_loc, 0.0) - add_vol)
             _to_key_fc = (sku, int(tcol))
             _sim_inv_by_sku_col.setdefault(_to_key_fc, []).append((int(lot_key), int(tlv)))
             _from_key_fc = (sku, int(fcol))
@@ -6561,6 +6718,28 @@ def plan_relocation(
     else:
         print("[optimizer] 複数SKU混在ロケなし")
 
+    # --- 元々空きだったロケ集合を構築（複数SKU同居機能用）
+    # _original_skus_by_loc に存在しないロケ、または存在するがSKU数=0のロケが対象
+    # can_receive_set がある場合はそのロケ、ない場合は shelf_usage のロケを基準にする
+    _original_empty_locs: Set[str] = set()
+    if getattr(cfg, "allow_empty_loc_multi_sku", True):
+        _all_known_locs: Set[str] = set()
+        if can_receive_set is not None:
+            _all_known_locs = set(can_receive_set)
+        # shelf_usage に含まれるロケも候補（in-memoryで管理されているもの）
+        # _original_skus_by_loc に含まれないロケ = 元々空き
+        _all_known_locs |= {str(loc).zfill(8) for loc in _original_skus_by_loc.keys()}
+        for _el_loc, _el_skus in _original_skus_by_loc.items():
+            if len(_el_skus) == 0:
+                _original_empty_locs.add(_el_loc)
+        # _original_skus_by_loc に含まれないロケはすべて元々空き
+        # （can_receive_set から _original_skus_by_loc を引いた差分）
+        if can_receive_set is not None:
+            _original_empty_locs |= can_receive_set - set(_original_skus_by_loc.keys())
+        # multi_sku_locs（元々混在）は除外
+        _original_empty_locs -= multi_sku_locs
+        logger.debug(f"[optimizer] _original_empty_locs: {len(_original_empty_locs)}ロケ（元々空きだったロケ）")
+
     # ベクトル化: apply不使用で高速化
     loc_str = inv["ロケーション"].astype(str).str.zfill(8)
     inv["lv"] = pd.to_numeric(loc_str.str[0:3], errors='coerce').fillna(0).astype(int)
@@ -8298,6 +8477,7 @@ def plan_relocation(
             blocked_dest_locs=_blocked_dest_locs,
             blocked_source_locs=multi_sku_locs if multi_sku_locs else None,
             original_inv_lot_levels=_original_inv_lot_levels,
+            original_empty_locs=_original_empty_locs if getattr(cfg, "allow_empty_loc_multi_sku", True) else None,
         )
         logger.debug(f"[optimizer] enforce_constraints completed: {len(accepted)} accepted out of {len(moves)}")
 
@@ -8603,10 +8783,21 @@ def plan_relocation(
                 # foreign SKU チェック
                 _existing = _sn_sim_skus.get(to_loc, set())
                 if _existing and not _existing <= {sku}:
-                    logger.debug(f"[safety-net] reject foreign_sku: {sku}->{to_loc} existing={_existing - {sku}} chain={cg}")
-                    if cg:
-                        _sn_rejected_chains.add(cg)
-                    continue
+                    # 複数SKU同居が許可された移動は安全ネットでも通過させる
+                    # 条件: フィーチャー有効 AND 元々空きロケ AND 許可プレフィックス一致
+                    _sn_is_allowed_pass = False
+                    if getattr(cfg, "allow_empty_loc_multi_sku", True):
+                        _sn_allowed_prefixes = tuple(getattr(cfg, "multi_sku_allowed_chain_prefixes",
+                            ("p1fifo", "swap_fifo_", "fifo_direct_", "p0rebal_", "p2consol_")))
+                        _sn_is_originally_empty = to_loc in _original_empty_locs
+                        _sn_is_allowed_pass = bool(
+                            _sn_is_originally_empty and cg and any(cg.startswith(p) for p in _sn_allowed_prefixes)
+                        )
+                    if not _sn_is_allowed_pass:
+                        logger.debug(f"[safety-net] reject foreign_sku: {sku}->{to_loc} existing={_existing - {sku}} chain={cg}")
+                        if cg:
+                            _sn_rejected_chains.add(cg)
+                        continue
 
                 # ロット混在チェック
                 if lot:

@@ -1,45 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { NextPage } from 'next';
-
-// ===== API helpers =====
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE || 'http://127.0.0.1:8000';
-
-async function postWithFallback(path: string, payload: any): Promise<{ json: any; via: 'proxy' | 'direct' }>{
-  const body = JSON.stringify(payload);
-  try {
-    const res = await fetch(`${API_BASE}${path}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body,
-    });
-    const json = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(typeof json === 'object' ? JSON.stringify(json) : String(res.statusText));
-    return { json, via: 'direct' };
-  } catch (_e) {
-    const res2 = await fetch(path, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body,
-    });
-    const json2 = await res2.json().catch(() => ({}));
-    if (!res2.ok) throw new Error(typeof json2 === 'object' ? JSON.stringify(json2) : String(res2.statusText));
-    return { json: json2, via: 'proxy' };
-  }
-}
-
-async function getWithFallback(path: string): Promise<{ json: any; via: 'proxy' | 'direct' }>{
-  try {
-    const res = await fetch(`${API_BASE}${path}`);
-    const json = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(typeof json === 'object' ? JSON.stringify(json) : String(res.statusText));
-    return { json, via: 'direct' };
-  } catch (_e) {
-    const res2 = await fetch(path);
-    const json2 = await res2.json().catch(() => ({}));
-    if (!res2.ok) throw new Error(typeof json2 === 'object' ? JSON.stringify(json2) : String(res2.statusText));
-    return { json: json2, via: 'proxy' };
-  }
-}
+import { postWithFallback, getWithFallback, API_BASE, getToken } from '@/lib/apiFetch';
 
 // ===== utilities =====
 const parseLoc8 = (loc: string) => {
@@ -131,6 +92,14 @@ export type Move = {
   from_loc: string;
   to_loc: string;
   distance?: number;
+  chain_group_id?: string | null;
+  execution_order?: number | null;
+  reason?: string;
+  chain_info?: {
+    is_consolidated?: boolean;
+    original_steps?: number;
+    intermediate_locations?: string[];
+  };
 };
 
 export type DropSummaryItem = { reason: string; count: number };
@@ -249,10 +218,17 @@ const OptimizePage: NextPage & { pageTitle?: string } = () => {
   const [windowDays, setWindowDays] = useState(90);
 
   // ---- Advanced budgets / depths (optional inputs; send only when provided) ----
-  // 連鎖退避をデフォルトで“有効(深さ1)”にし、予算も有効値に設定
-  const [chainDepthInput, setChainDepthInput] = useState<string>('1');
-  const [evictionBudgetInput, setEvictionBudgetInput] = useState<string>('50');
-  const [touchBudgetInput, setTouchBudgetInput] = useState<string>('1000');
+  // 連鎖退避をデフォルトで”有効(深さ2)”にし、予算も有効値に設定
+  const [chainDepthInput, setChainDepthInput] = useState<string>('2');
+  const [evictionBudgetInput, setEvictionBudgetInput] = useState<string>('200');
+  const [touchBudgetInput, setTouchBudgetInput] = useState<string>('2000');
+
+  // ---- Pass toggles ----
+  const [enableConsolidate, setEnableConsolidate] = useState<boolean>(true);
+  const [enableFifo, setEnableFifo] = useState<boolean>(true);
+  const [enableAreaRebalance, setEnableAreaRebalance] = useState<boolean>(true);
+  const [enableZoneSwap, setEnableZoneSwap] = useState<boolean>(true);
+  const [enableMainLoop, setEnableMainLoop] = useState<boolean>(true);
 
   // ---- Advanced (band preferences) ----
   const [advancedOpen, setAdvancedOpen] = useState<boolean>(false);
@@ -266,6 +242,11 @@ const OptimizePage: NextPage & { pageTitle?: string } = () => {
   // ---- Pick/Storage levels ----
   const [pickLevelsInput, setPickLevelsInput] = useState<string>('1,2');
   const [storageLevelsInput, setStorageLevelsInput] = useState<string>('3,4');
+
+  // ---- Multi-SKU co-location ----
+  const [allowEmptyLocMultiSku, setAllowEmptyLocMultiSku] = useState<boolean>(true);
+  const [multiSkuLv1CapInput, setMultiSkuLv1CapInput] = useState<string>('0.9');
+  const [multiSkuLv2CapInput, setMultiSkuLv2CapInput] = useState<string>('0.3');
 
   const chainDepth = useMemo(() => {
     if (chainDepthInput === '') return undefined;
@@ -290,6 +271,18 @@ const OptimizePage: NextPage & { pageTitle?: string } = () => {
     const n = parseInt(packLowMaxInput, 10);
     return Number.isFinite(n) && n >= 0 ? n : undefined;
   }, [packLowMaxInput]);
+
+  const multiSkuLv1Cap = useMemo(() => {
+    if (multiSkuLv1CapInput === '') return undefined;
+    const n = parseFloat(multiSkuLv1CapInput);
+    return Number.isFinite(n) && n > 0 ? n : undefined;
+  }, [multiSkuLv1CapInput]);
+
+  const multiSkuLv2Cap = useMemo(() => {
+    if (multiSkuLv2CapInput === '') return undefined;
+    const n = parseFloat(multiSkuLv2CapInput);
+    return Number.isFinite(n) && n > 0 ? n : undefined;
+  }, [multiSkuLv2CapInput]);
 
   const packHighMin = useMemo(() => {
     if (packHighMinInput === '') return undefined;
@@ -336,7 +329,7 @@ const OptimizePage: NextPage & { pageTitle?: string } = () => {
   }, [maxMovesInput]);
 
   // SKU移動元ロケーション数制限（デフォルト: 5）
-  const [maxSourceLocsInput, setMaxSourceLocsInput] = useState<string>('5');
+  const [maxSourceLocsInput, setMaxSourceLocsInput] = useState<string>('');
   const maxSourceLocsPerSku = useMemo(() => {
     if (maxSourceLocsInput === '') return undefined; // 空欄=無制限
     const n = parseInt(maxSourceLocsInput, 10);
@@ -402,7 +395,7 @@ const OptimizePage: NextPage & { pageTitle?: string } = () => {
       // Open SSE stream (direct to API in production, via proxy in dev)
       try {
         if (esRef.current) { esRef.current.close(); esRef.current = null; }
-        const sseUrl = `${API_BASE}/v1/upload/relocation/stream?trace_id=${encodeURIComponent(traceId)}`;
+        const sseUrl = `${API_BASE}/v1/upload/relocation/stream?trace_id=${encodeURIComponent(traceId)}${(() => { const t = getToken(); return t ? `&token=${encodeURIComponent(t)}` : ''; })()}`;
         console.log('[SSE] Opening connection to:', sseUrl);
         const es = new EventSource(sseUrl);
         esRef.current = es;
@@ -479,9 +472,19 @@ const OptimizePage: NextPage & { pageTitle?: string } = () => {
       if (typeof touchBudget === 'number') payload.touch_budget = touchBudget;
       payload.include_debug = true;
 
+      // --- Pass toggles ---
+      payload.enable_pass_consolidate = enableConsolidate;
+      payload.enable_pass_fifo = enableFifo;
+      payload.enable_pass0_area_rebalance = enableAreaRebalance;
+      payload.enable_pass_zone_swap = enableZoneSwap;
+      payload.enable_main_loop = enableMainLoop;
+
       // --- Advanced (band preferences) : send only when specified ---
       if (typeof packLowMax === 'number') payload.pack_low_max = packLowMax;
       if (typeof packHighMin === 'number') payload.pack_high_min = packHighMin;
+      payload.allow_empty_loc_multi_sku = allowEmptyLocMultiSku;
+      if (typeof multiSkuLv1Cap === 'number') payload.multi_sku_level1_vol_cap = multiSkuLv1Cap;
+      if (typeof multiSkuLv2Cap === 'number') payload.multi_sku_level2_vol_cap = multiSkuLv2Cap;
       if (typeof bandPrefWeight === 'number') payload.band_pref_weight = bandPrefWeight;
       if (Array.isArray(nearCols) && nearCols.length) payload.near_cols = nearCols;
       if (Array.isArray(farCols) && farCols.length) payload.far_cols = farCols;
@@ -655,6 +658,12 @@ const OptimizePage: NextPage & { pageTitle?: string } = () => {
   // keep trace id in meta; live polling uses /relocation/debug snapshot
       setSummary(json?.summary ?? null);
 
+      // sync APIレスポンスにsummary_reportが含まれている場合は即座に設定
+      if (json?.summary_report && typeof json.summary_report === 'string') {
+        console.log('[Relocation] Setting summary report from sync response, length:', json.summary_report.length);
+        setSummaryReport(json.summary_report);
+      }
+
       // 新しい計画開始時はドロップ診断をリセット
       setShowDrops(false);
       setDropSummary(null);
@@ -682,8 +691,8 @@ const OptimizePage: NextPage & { pageTitle?: string } = () => {
       // This ensures we show the actual number of moves returned
       const movesCount = mvWithDist.length;
       if (movesCount > 0) {
-        if (livePlanned === null || livePlanned === 0) setLivePlanned(movesCount);
-        if (liveAccepted === null || liveAccepted === 0) setLiveAccepted(movesCount);
+        setLivePlanned((prev) => (prev === null || prev === 0 ? movesCount : prev));
+        setLiveAccepted((prev) => (prev === null || prev === 0 ? movesCount : prev));
       }
       
       setReloStatus(`✔ 最適化完了（${mvWithDist.length}件, ${via}）`);
@@ -703,6 +712,7 @@ const OptimizePage: NextPage & { pageTitle?: string } = () => {
       } catch (err) {
         console.warn('[Relocation] Failed to fetch summary report:', err);
       }
+      setRelocating(false);
     } catch (e: any) {
       console.error('Relocation error:', e); // デバッグログ
       // タイムアウトエラーの場合、バックエンドで処理が完了している可能性があるためポーリングで確認
@@ -811,10 +821,12 @@ const OptimizePage: NextPage & { pageTitle?: string } = () => {
       setUsingSSE(false);
     }
   }, [
-    blocks, maxMoves, fillRate, qualities, useAiMain, windowDays,
+    blocks, maxMoves, maxSourceLocsPerSku, fillRate, qualities, useAiMain, windowDays,
     chainDepth, evictionBudget, touchBudget,
     packLowMax, packHighMin, bandPrefWeight, nearCols, farCols, promoKeywords,
-    liveAccepted, livePlanned,
+    pickLevels, storageLevels,
+    allowEmptyLocMultiSku, multiSkuLv1Cap, multiSkuLv2Cap,
+    enableConsolidate, enableFifo, enableAreaRebalance, enableZoneSwap, enableMainLoop,
   ]);
 
   // Poll relocation/debug while running to show real-time counts
@@ -854,159 +866,57 @@ const OptimizePage: NextPage & { pageTitle?: string } = () => {
     return () => { stop = true; if (timer) clearTimeout(timer); };
   }, [relocating, currentTraceId, livePlanned]);
 
-  const exportCsv = useCallback(() => {
-    if (!moves.length) return;
-    const header = ['sku_id', 'lot', 'lot_date', 'qty', 'from_loc', 'to_loc', 'chain_group_id', 'execution_order', 'distance', 'reason'];
-    const lines = [
-      header.join(','),
-      ...moves.map((m) =>
-        [
-          m.sku_id ?? '',
-          m.lot ?? '',
-          m.lot_date ?? '',
-          String(m.qty ?? ''),
-          m.from_loc ?? '',
-          m.to_loc ?? '',
-          (m as any).chain_group_id ?? '',
-          (m as any).execution_order != null ? String((m as any).execution_order) : '',
-          (m.distance ?? '').toString(),
-          (m as any).reason ?? '',
-        ]
-          .map((v) => '"' + String(v).replace(/"/g, '""') + '"')
-          .join(',')
-      ),
-    ];
-    const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `relocation_moves_${Date.now()}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
-  }, [moves]);
-
-  // ローカルでエビクションチェーンを統合する関数
-  const consolidateMovesLocally = useCallback((movesData: any[]) => {
-    const chains = new Map<string, any[]>();
-    
-    // SKU+ロット別にチェーンを構築
-    for (const move of movesData) {
-      const key = `${move.sku_id || ''}_${move.lot || ''}`;
-      if (!chains.has(key)) {
-        chains.set(key, []);
-      }
-      chains.get(key)!.push(move);
-    }
-    
-    const finalMoves: any[] = [];
-    let consolidatedCount = 0;
-    
-    // Helper to generate unique chain_group_id
-    const generateChainGroupId = () => `consol_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
-    
-    for (const [key, chain] of chains.entries()) {
-      if (chain.length === 1) {
-        // 単一移動の場合はそのまま（元の chain_group_id を保持）
-        finalMoves.push(chain[0]);
-      } else {
-        // 複数移動の場合は統合
-        const firstMove = chain[0];
-        const lastMove = chain[chain.length - 1];
-        
-        // Use existing chain_group_id from first move, or generate new one
-        const chainGroupId = firstMove.chain_group_id || generateChainGroupId();
-        
-        const consolidatedMove = {
-          ...lastMove,
-          from_loc: firstMove.from_loc,
-          chain_group_id: chainGroupId,
-          execution_order: chain.length,  // Final step number
-          chain_info: {
-            is_consolidated: true,
-            original_steps: chain.length,
-            intermediate_locations: chain.slice(0, -1).map((m: any) => m.to_loc)
-          }
-        };
-        
-        finalMoves.push(consolidatedMove);
-        consolidatedCount++;
-      }
-    }
-    
-    return {
-      moves: finalMoves,
-      count: finalMoves.length,
-      original_count: movesData.length,
-      consolidated_chains: consolidatedCount,
-      efficiency_percent: (finalMoves.length / movesData.length) * 100
-    };
-  }, []);
-
-  const exportFinalMovesOnly = useCallback(async () => {
-    console.log('最終移動のみエクスポート開始');
-    if (!moves.length) {
+  const exportCsv = useCallback(async () => {
+    if (!reloMeta?.trace_id) {
       alert('移動データがありません');
       return;
     }
+    try {
+      const token = getToken();
+      const url = `${API_BASE}/v1/upload/relocation/export/moves?trace_id=${reloMeta.trace_id}`;
+      const resp = await fetch(url, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      const blob = await resp.blob();
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = `relocation_moves_${Date.now()}.csv`;
+      a.click();
+      URL.revokeObjectURL(a.href);
+    } catch (err: any) {
+      alert(`CSVエクスポートに失敗: ${err.message}`);
+    }
+  }, [reloMeta]);
 
+  const exportFinalMovesOnly = useCallback(async () => {
+    if (!reloMeta?.trace_id) {
+      alert('移動データがありません');
+      return;
+    }
     setRelocating(true);
     try {
-      // 既存の移動データからクライアントサイドで統合処理（APIの再実行不要）
-      const json = consolidateMovesLocally(moves);
-      
-      if (!json.moves || !Array.isArray(json.moves)) {
-        throw new Error('無効な応答データです');
+      const token = getToken();
+      const url = `${API_BASE}/v1/upload/relocation/export/final-moves?trace_id=${reloMeta.trace_id}`;
+      const resp = await fetch(url, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (!resp.ok) {
+        const text = await resp.text();
+        throw new Error(text || `HTTP ${resp.status}`);
       }
-
-      console.log(`最終移動取得完了: ${json.original_count}件 → ${json.count}件（効率: ${json.efficiency_percent?.toFixed(1)}%）`);
-
-      // CSV形式でエクスポート
-      const header = ['sku_id', 'lot', 'lot_date', 'qty', 'from_loc', 'to_loc', 'chain_group_id', 'execution_order', 'distance', 'is_consolidated', 'original_steps', 'intermediate_locations', 'reason'];
-      const lines = [
-        header.join(','),
-        ...json.moves.map((m: any) => {
-          const chainInfo = m.chain_info || {};
-          return [
-            m.sku_id ?? '',
-            m.lot ?? '',
-            m.lot_date ?? '',
-            String(m.qty ?? ''),
-            m.from_loc ?? '',
-            m.to_loc ?? '',
-            m.chain_group_id ?? '',
-            m.execution_order != null ? String(m.execution_order) : '',
-            (m.distance ?? '').toString(),
-            chainInfo.is_consolidated ? 'はい' : 'いいえ',
-            String(chainInfo.original_steps || 1),
-            (chainInfo.intermediate_locations || []).join('; '),
-            m.reason ?? '',
-          ]
-            .map((v) => '"' + String(v).replace(/"/g, '""') + '"')
-            .join(',');
-        }),
-      ];
-
-      const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8;' });
-      const url = URL.createObjectURL(blob);
+      const blob = await resp.blob();
       const a = document.createElement('a');
-      a.href = url;
+      a.href = URL.createObjectURL(blob);
       a.download = `final_moves_only_${Date.now()}.csv`;
       a.click();
-      URL.revokeObjectURL(url);
-
-      alert(`作業員向け最終移動リストをエクスポートしました\n原移動: ${json.original_count}件\n最終移動: ${json.count}件\n統合効率: ${json.efficiency_percent?.toFixed(1)}%`);
-
+      URL.revokeObjectURL(a.href);
     } catch (err: any) {
-      console.error('最終移動エクスポートエラー:', err);
-      const errorMessage = err?.message || String(err);
-      alert(`最終移動エクスポートでエラーが発生しました:\n\n${errorMessage}\n\n※ バックエンドサーバーが起動していることを確認してください`);
+      alert(`最終移動エクスポートに失敗: ${err.message}`);
     } finally {
       setRelocating(false);
     }
-  }, [
-    moves, maxMoves, fillRate, blocks, qualities, useAiMain,
-    chainDepth, evictionBudget, touchBudget
-  ]);
+  }, [reloMeta]);
 
   const exportLocationSnapshot = useCallback(async () => {
     console.log('ロケーション一覧エクスポート開始', { blocks, moves });
@@ -1674,7 +1584,7 @@ const OptimizePage: NextPage & { pageTitle?: string } = () => {
               value={maxSourceLocsInput}
               onChange={(e) => setMaxSourceLocsInput(e.target.value)}
               placeholder="空欄=無制限"
-              title="1SKUあたり最大何ロケーションから移動するか制限（空欄で無制限）。デフォルト2 = 最も古いロットの2ロケーションを優先"
+              title="1SKUあたり最大何ロケーションから移動するか制限（空欄で無制限）。通常は空欄のまま使います。"
             />
           </label>
           <label className="text-sm">
@@ -1769,6 +1679,38 @@ const OptimizePage: NextPage & { pageTitle?: string } = () => {
 作業員の負担を調整するため、移動作業の範囲を制限します。小さい数値ほど作業が楽になります。"
             />
           </label>
+          {/* ---- 最適化ステップ選択 ---- */}
+          <div className="border border-black/10 rounded-lg p-3 space-y-2">
+            <p className="text-sm font-medium text-gray-700">実行する最適化ステップ</p>
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+              <label className="flex items-center gap-2 text-sm cursor-pointer">
+                <input type="checkbox" className="h-4 w-4 rounded border-black/10 text-black focus:ring-black/20"
+                  checked={enableConsolidate} onChange={(e) => setEnableConsolidate(e.target.checked)} />
+                同一ロット集約
+              </label>
+              <label className="flex items-center gap-2 text-sm cursor-pointer">
+                <input type="checkbox" className="h-4 w-4 rounded border-black/10 text-black focus:ring-black/20"
+                  checked={enableFifo} onChange={(e) => setEnableFifo(e.target.checked)} />
+                FIFO是正
+              </label>
+              <label className="flex items-center gap-2 text-sm cursor-pointer">
+                <input type="checkbox" className="h-4 w-4 rounded border-black/10 text-black focus:ring-black/20"
+                  checked={enableAreaRebalance} onChange={(e) => setEnableAreaRebalance(e.target.checked)} />
+                入数帯エリア是正
+              </label>
+              <label className="flex items-center gap-2 text-sm cursor-pointer">
+                <input type="checkbox" className="h-4 w-4 rounded border-black/10 text-black focus:ring-black/20"
+                  checked={enableZoneSwap} onChange={(e) => setEnableZoneSwap(e.target.checked)} />
+                ゾーン入替
+              </label>
+              <label className="flex items-center gap-2 text-sm cursor-pointer">
+                <input type="checkbox" className="h-4 w-4 rounded border-black/10 text-black focus:ring-black/20"
+                  checked={enableMainLoop} onChange={(e) => setEnableMainLoop(e.target.checked)} />
+                段下げ・動線最適化
+              </label>
+            </div>
+          </div>
+
           <label className="text-sm">
             AI自動最適化を使用：
             <input
@@ -2042,6 +1984,43 @@ Excelで開いて詳細分析や作業計画の作成に活用できます。"
               </label>
             </div>
             <div className="text-[11px] text-gray-500 mt-1">帯は「35-41」「1-11」や「1,2,3」などの形式をサポート。空欄は未指定としてサーバ既定を使用します。</div>
+            <div className="border-t border-black/10 pt-3 mt-3">
+              <div className="text-xs font-medium mb-2">複数SKU同居ルール（空きロケのみ対象）</div>
+              <label className="flex items-center gap-2 text-xs mb-2">
+                <input
+                  type="checkbox"
+                  checked={allowEmptyLocMultiSku}
+                  onChange={(e) => setAllowEmptyLocMultiSku(e.target.checked)}
+                />
+                空きロケへの複数SKU同居を許可
+              </label>
+              <div className="grid grid-cols-2 gap-2">
+                <label className="text-xs">
+                  <div className="mb-1">1段目 合計容積上限 (㎥)</div>
+                  <input
+                    type="number"
+                    step="0.1"
+                    min="0"
+                    value={multiSkuLv1CapInput}
+                    onChange={(e) => setMultiSkuLv1CapInput(e.target.value)}
+                    disabled={!allowEmptyLocMultiSku}
+                    className="rounded-lg border border-black/10 bg-white px-3 py-2 text-sm w-28 focus:outline-none focus:ring-2 focus:ring-black/20 disabled:opacity-40"
+                  />
+                </label>
+                <label className="text-xs">
+                  <div className="mb-1">2段目 合計容積上限 (㎥)</div>
+                  <input
+                    type="number"
+                    step="0.1"
+                    min="0"
+                    value={multiSkuLv2CapInput}
+                    onChange={(e) => setMultiSkuLv2CapInput(e.target.value)}
+                    disabled={!allowEmptyLocMultiSku}
+                    className="rounded-lg border border-black/10 bg-white px-3 py-2 text-sm w-28 focus:outline-none focus:ring-2 focus:ring-black/20 disabled:opacity-40"
+                  />
+                </label>
+              </div>
+            </div>
           </div>
         )}
 
