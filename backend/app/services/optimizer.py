@@ -2794,6 +2794,17 @@ def enforce_constraints(
         _sm_init_skus = original_skus_by_loc
         _sm_init_qty = original_qty_by_loc_sku
         _sm_baseline = sum(1 for v in _sm_init_skus.values() if len(v) > 1)
+        # allow_empty_loc_multi_sku が有効な場合、receivableロケ（空き+1-2SKU）への
+        # 意図的な多SKU配置は混在増加とみなさない。_count_sku_mixing は to_loc に
+        # 既存SKUがいると混在カウントするため、receivableロケへの着地分をbaselineに加算して相殺する。
+        if getattr(cfg, "allow_empty_loc_multi_sku", True) and _original_receivable_locs_enforce:
+            _sm_receivable_extra = sum(
+                1 for m in accepted
+                if str(m.to_loc).zfill(8) in _original_receivable_locs_enforce
+                and bool(original_skus_by_loc.get(str(m.to_loc).zfill(8)))
+                and not original_skus_by_loc.get(str(m.to_loc).zfill(8), set()) <= {str(m.sku_id)}
+            )
+            _sm_baseline += _sm_receivable_extra
         _sm_post = _count_sku_mixing(accepted, _sm_init_skus, _sm_init_qty)
         if _sm_post > _sm_baseline:
             logger.warning(f"[enforce] post-SKU-mix: baseline={_sm_baseline}, post={_sm_post}, removing offenders...")
@@ -6713,22 +6724,29 @@ def plan_relocation(
     #
     # 原始SKU数による分類:
     #   0 (空き)  → _original_empty_locs（後段で構築）: 受入可
-    #   1-2 SKU   → multi_sku_locs_receivable: 受入可（最大3SKUまで）
-    #   3+ SKU    → multi_sku_locs_strict: 完全ブロック
-    multi_sku_locs_strict: Set[str] = set()    # 3SKU以上: 移動元・移動先ともに完全ブロック
-    multi_sku_locs_receivable: Set[str] = set()  # 1-2SKU: 移動元はブロック、移動先は受入可
+    #   1 SKU     → multi_sku_locs_receivable: 移動元OK、移動先受入可
+    #   2 SKU     → multi_sku_locs_receivable + multi_sku_locs_2plus: 移動元ブロック、移動先受入可
+    #   3+ SKU    → multi_sku_locs_strict + multi_sku_locs_2plus: 完全ブロック
+    multi_sku_locs_strict: Set[str] = set()      # 3SKU以上: 移動元・移動先ともに完全ブロック
+    multi_sku_locs_receivable: Set[str] = set()  # 1-2SKU: 移動先は受入可
+    multi_sku_locs_2plus: Set[str] = set()       # 2SKU以上: 移動元ブロック
     for _ml_loc, _ml_skus in _original_skus_by_loc.items():
         _ml_n = len(_ml_skus)
         if _ml_n >= 3:
             multi_sku_locs_strict.add(_ml_loc)
-        elif _ml_n >= 1:
+            multi_sku_locs_2plus.add(_ml_loc)
+        elif _ml_n == 2:
             multi_sku_locs_receivable.add(_ml_loc)
+            multi_sku_locs_2plus.add(_ml_loc)
+        elif _ml_n == 1:
+            multi_sku_locs_receivable.add(_ml_loc)
+            # 1SKUは移動元ブロックしない（従来通り動かせる）
 
     # 後方互換: 旧 multi_sku_locs は safety-net / 最終除去で参照 → strict のみ（完全ブロック対象）
     multi_sku_locs = multi_sku_locs_strict
 
-    # 移動元ブロック: 2SKU以上のロケ（receivable + strict）は移動元にしない
-    _multi_sku_source_blocked = multi_sku_locs_strict | multi_sku_locs_receivable
+    # 移動元ブロック: 2SKU以上のロケのみ（1SKUは従来通り動かせる）
+    _multi_sku_source_blocked = multi_sku_locs_2plus
     # 移動先ブロック: 3SKU以上のロケのみ（receivable は allow_empty_loc_multi_sku で受入可能）
     _multi_sku_dest_blocked = multi_sku_locs_strict
 
@@ -6753,15 +6771,17 @@ def plan_relocation(
         _blocked_dest_locs |= _multi_sku_dest_blocked
 
         logger.debug(
-            f"[optimizer] 複数SKU混在ロケ除外: strict={len(multi_sku_locs_strict)}ロケ→完全ブロック, "
-            f"receivable={len(multi_sku_locs_receivable)}ロケ→移動元のみ除外({excluded_inv_count}件)"
+            f"[optimizer] 複数SKU混在ロケ除外: strict={len(multi_sku_locs_strict)}ロケ(3+SKU)→完全ブロック, "
+            f"2plus={len(multi_sku_locs_2plus)}ロケ(2+SKU)→移動元ブロック({excluded_inv_count}件), "
+            f"receivable={len(multi_sku_locs_receivable)}ロケ(1-2SKU)→移動先受入可"
         )
         try:
             _publish_progress(get_current_trace_id(), {
                 "type": "info", "phase": "filter",
                 "message": (
                     f"複数SKU混在ロケ除外: strict={len(multi_sku_locs_strict)}ロケ完全ブロック, "
-                    f"receivable={len(multi_sku_locs_receivable)}ロケ移動元{excluded_inv_count}件除外"
+                    f"2plus={len(multi_sku_locs_2plus)}ロケ移動元{excluded_inv_count}件除外, "
+                    f"receivable={len(multi_sku_locs_receivable)}ロケ移動先受入可"
                 )
             })
         except Exception:

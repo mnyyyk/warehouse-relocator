@@ -911,6 +911,100 @@ class TestMultiSkuReceivableLocs:
         )
 
     # ------------------------------------------------------------------
+    # Case R9: 元々1SKUロケからの move-out → 受理（source blockしない）
+    # ------------------------------------------------------------------
+    def test_r9_one_sku_loc_source_allowed(self):
+        """元々1SKUロケからの移動は source_blocked に含まれず受理される"""
+        sku_master = _make_sku_master([
+            {"sku_id": "SKU_A", "pack_qty": 30, "vol_m3": 0.05},
+        ])
+        source_loc = "00301001"  # Lv3: 元々1SKU
+        dest_loc = "00100100"    # Lv1: 元々空き
+
+        inv = _make_inv([
+            {"sku": "SKU_A", "lot": "LA1", "lot_key": 20250101, "loc": source_loc, "qty": 1, "vol_each": 0.05},
+        ])
+
+        cfg = _make_cfg(
+            allow_empty_loc_multi_sku=True,
+            multi_sku_allowed_chain_prefixes=("p1fifo",),
+        )
+        original_empty_locs: Set[str] = {dest_loc}
+        original_skus_by_loc = {
+            source_loc: {"SKU_A"},  # 元々1SKU → source blockしない
+            dest_loc: set(),
+        }
+        original_qty = {
+            (source_loc, "SKU_A"): 1.0,
+        }
+        moves = [
+            _make_move("SKU_A", "LA1", 1, source_loc, dest_loc, chain_group_id="p1fifo_001"),
+        ]
+
+        result = _call_enforce(
+            sku_master, inv, moves, cfg=cfg,
+            original_empty_locs=original_empty_locs,
+            original_skus_by_loc=original_skus_by_loc,
+            original_qty_by_loc_sku=original_qty,
+        )
+        # 1SKUロケからの移動は受理されるべき
+        assert len(result) == 1, f"元々1SKUロケからの移動は受理されるべき: {len(result)}件受理"
+        assert str(result[0].from_loc).zfill(8) == source_loc
+
+    # ------------------------------------------------------------------
+    # Case R10: 元々1SKUロケ（to側）に別SKUを追加 → receivable扱いで受理
+    # ------------------------------------------------------------------
+    def test_r10_one_sku_loc_accepts_foreign_sku(self):
+        """元々1SKUロケ（to側）への別SKU追加は receivable として受理される"""
+        sku_master = _make_sku_master([
+            {"sku_id": "SKU_X", "pack_qty": 30, "vol_m3": 0.05},
+            {"sku_id": "SKU_A", "pack_qty": 30, "vol_m3": 0.05},
+        ])
+        target_loc = "00100100"  # Lv1: 元々SKU_X が1つ（receivable）
+        source_loc = "00301001"  # Lv3: SKU_A の移動元
+
+        inv = _make_inv([
+            {"sku": "SKU_X", "lot": "LX1", "lot_key": 20250101, "loc": target_loc, "qty": 1, "vol_each": 0.05},
+            {"sku": "SKU_A", "lot": "LA1", "lot_key": 20250101, "loc": source_loc, "qty": 1, "vol_each": 0.05},
+        ])
+
+        cfg = _make_cfg(
+            allow_empty_loc_multi_sku=True,
+            multi_sku_max_per_loc=3,
+            multi_sku_level1_vol_cap=0.9,
+            multi_sku_pack_band_match=True,
+            multi_sku_target_levels=(1, 2),
+            multi_sku_allowed_chain_prefixes=("p2consol_",),
+        )
+        original_skus_by_loc = {
+            target_loc: {"SKU_X"},  # 元々1SKU → receivable（移動先受入可）
+            source_loc: {"SKU_A"},
+        }
+        original_qty = {
+            (target_loc, "SKU_X"): 1.0,
+            (source_loc, "SKU_A"): 1.0,
+        }
+        # optimize関数は _original_receivable_locs = empty_locs | multi_sku_locs_receivable を
+        # original_empty_locs として enforce_constraints に渡す。
+        # テストでも同様に1SKUロケを receivable_locs に含めて渡す。
+        original_receivable_locs: Set[str] = {target_loc}
+        moves = [
+            _make_move("SKU_A", "LA1", 1, source_loc, target_loc, chain_group_id="p2consol_001"),
+        ]
+
+        result = _call_enforce(
+            sku_master, inv, moves, cfg=cfg,
+            original_empty_locs=original_receivable_locs,
+            original_skus_by_loc=original_skus_by_loc,
+            original_qty_by_loc_sku=original_qty,
+        )
+        # 元々1SKUロケは receivable → 別SKU追加も受理されるべき
+        accepted_to_target = [m for m in result if str(m.to_loc).zfill(8) == target_loc]
+        assert len(accepted_to_target) == 1, (
+            f"元々1SKUロケへの別SKU追加は受理されるべき: {len(accepted_to_target)}件受理"
+        )
+
+    # ------------------------------------------------------------------
     # Case R8: 元々2SKUロケからの move-out → 依然として禁止（source blocked）
     # ------------------------------------------------------------------
     def test_r8_two_sku_loc_source_blocked(self):
