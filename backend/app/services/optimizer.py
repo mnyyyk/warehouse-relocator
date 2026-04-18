@@ -1789,24 +1789,24 @@ def _get_level_vol_cap(level: int, cfg: "OptimizerConfig") -> Optional[float]:
     return None
 
 
-def _check_empty_loc_coexistence(
+def _check_multi_sku_coexistence(
     to_loc: str,
     sku_id: str,
     qty: int,
     pack_vol: float,
-    original_empty_locs: Set[str],
+    original_receivable_locs: Set[str],
     sim_skus_by_loc: Dict[str, Set[str]],
     sim_vol_by_loc: Dict[str, float],
     sku_pack_band: Dict[str, str],
     level: int,
     cfg: "OptimizerConfig",
 ) -> Tuple[bool, Optional[str]]:
-    """元々空きだったロケへの複数SKU同居ゲート。
+    """元々0-2SKUだったロケへの複数SKU同居ゲート（空き + 1-2SKUロケ対象）。
 
     Returns (allowed, reject_reason). reject_reason is None if allowed.
     """
-    # 1. 元々空きロケでなければ従来ロジックに委ねる（フォールスルー）
-    if to_loc not in original_empty_locs:
+    # 1. 受入可能ロケでなければ従来ロジックに委ねる（フォールスルー）
+    if to_loc not in original_receivable_locs:
         return (False, None)
 
     # 2. 対象段でなければ却下
@@ -1818,6 +1818,8 @@ def _check_empty_loc_coexistence(
     other_skus = existing_skus - {sku_id}
 
     # 3. 実質1SKU目（他SKUなし）→ SKU数/pack帯チェック不要、フォールスルー
+    # No other SKUs means this is effectively a same-SKU addition or empty loc;
+    # level_vol_cap and foreign_sku checks are handled by caller.
     if not other_skus:
         return (True, None)
 
@@ -2019,7 +2021,7 @@ def enforce_constraints(
             _sku_pack_band_map[str(_pb_sku)] = _get_sku_pack_band(str(_pb_sku), pack_map, cfg)
 
     # 元々空きだったロケ集合（外部から渡された場合はそのまま使用）
-    _original_empty_locs_enforce: Set[str] = original_empty_locs if original_empty_locs is not None else set()
+    _original_receivable_locs_enforce: Set[str] = original_empty_locs if original_empty_locs is not None else set()
 
     # 入力movesをチェーン内execution_order順にソートして退避が先に処理されるようにする
     # これにより部分退避後のforeign_skuチェックが正しく動作する
@@ -2361,7 +2363,7 @@ def enforce_constraints(
         _dest_owner = _dest_claimed_by.get(to_loc)
         if _dest_owner is not None and _dest_owner != _this_cg:
             _dest_conflict_bypass = False
-            if getattr(cfg, "allow_empty_loc_multi_sku", True) and to_loc in _original_empty_locs_enforce:
+            if getattr(cfg, "allow_empty_loc_multi_sku", True) and to_loc in _original_receivable_locs_enforce:
                 _dcb_prefixes = tuple(getattr(cfg, "multi_sku_allowed_chain_prefixes",
                     ("p1fifo", "swap_fifo_", "fifo_direct_", "p0rebal_", "p2consol_")))
                 _dest_conflict_bypass = bool(_this_cg and any(_this_cg.startswith(p) for p in _dcb_prefixes))
@@ -2394,12 +2396,12 @@ def enforce_constraints(
                     _this_cg_multi.startswith(p) for p in _allowed_prefixes
                 ))
             if _is_allowed_pass:
-                _coex_allowed, _coex_reason = _check_empty_loc_coexistence(
+                _coex_allowed, _coex_reason = _check_multi_sku_coexistence(
                     to_loc=to_loc,
                     sku_id=sku,
                     qty=int(m.qty),
                     pack_vol=float(sku_vol_map.get(sku, 0.0) or 0.0),
-                    original_empty_locs=_original_empty_locs_enforce,
+                    original_receivable_locs=_original_receivable_locs_enforce,
                     sim_skus_by_loc=_sim_skus_by_loc,
                     sim_vol_by_loc=_sim_vol_by_loc,
                     sku_pack_band=_sku_pack_band_map,
@@ -6705,36 +6707,62 @@ def plan_relocation(
     sample_locs_after = inv["ロケーション"].head(5).tolist()
     logger.debug(f"[optimizer] Sample locations after parse: {sample_locs_after}")
 
-    # --- 複数SKU混在ロケーションを除外（移動元・移動先両方から除外）
+    # --- 複数SKU混在ロケーションを分類（移動元・移動先の除外を SKU数で分ける）
     # 品質フィルタ前の全在庫（_original_skus_by_loc）を使って混在判定
     # 品質フィルタ後のinvでは1SKUでも、フィルタ前に別品質の別SKUがいるロケを含める
-    multi_sku_locs = {loc for loc, skus in _original_skus_by_loc.items() if len(skus) > 1}
-    
-    if multi_sku_locs:
+    #
+    # 原始SKU数による分類:
+    #   0 (空き)  → _original_empty_locs（後段で構築）: 受入可
+    #   1-2 SKU   → multi_sku_locs_receivable: 受入可（最大3SKUまで）
+    #   3+ SKU    → multi_sku_locs_strict: 完全ブロック
+    multi_sku_locs_strict: Set[str] = set()    # 3SKU以上: 移動元・移動先ともに完全ブロック
+    multi_sku_locs_receivable: Set[str] = set()  # 1-2SKU: 移動元はブロック、移動先は受入可
+    for _ml_loc, _ml_skus in _original_skus_by_loc.items():
+        _ml_n = len(_ml_skus)
+        if _ml_n >= 3:
+            multi_sku_locs_strict.add(_ml_loc)
+        elif _ml_n >= 1:
+            multi_sku_locs_receivable.add(_ml_loc)
+
+    # 後方互換: 旧 multi_sku_locs は safety-net / 最終除去で参照 → strict のみ（完全ブロック対象）
+    multi_sku_locs = multi_sku_locs_strict
+
+    # 移動元ブロック: 2SKU以上のロケ（receivable + strict）は移動元にしない
+    _multi_sku_source_blocked = multi_sku_locs_strict | multi_sku_locs_receivable
+    # 移動先ブロック: 3SKU以上のロケのみ（receivable は allow_empty_loc_multi_sku で受入可能）
+    _multi_sku_dest_blocked = multi_sku_locs_strict
+
+    if _multi_sku_source_blocked:
         before_inv_count = len(inv)
-        # 移動元から除外: 複数SKU混在ロケにある在庫は一切移動しない
-        _in_multi = inv["ロケーション"].isin(multi_sku_locs)
+        # 移動元から除外: 2SKU以上の混在ロケにある在庫は一切移動しない
+        _in_multi = inv["ロケーション"].isin(_multi_sku_source_blocked)
         inv = inv[~_in_multi].copy()
         inv = inv.reset_index(drop=True)
         excluded_inv_count = before_inv_count - len(inv)
-        logger.debug(f"[optimizer] 複数SKU混在ロケ除外: {excluded_inv_count}件を移動候補から除外")
-        
-        # 移動先から除外: can_receive_setから複数SKU混在ロケを削除
+        logger.debug(f"[optimizer] 複数SKU混在ロケ除外（移動元）: {excluded_inv_count}件を移動候補から除外")
+
+        # 移動先から除外: can_receive_set から strict（3SKU以上）のみ削除
         if can_receive_set is not None:
             before_recv_count = len(can_receive_set)
-            can_receive_set = can_receive_set - multi_sku_locs
+            can_receive_set = can_receive_set - _multi_sku_dest_blocked
             excluded_recv_count = before_recv_count - len(can_receive_set)
         else:
             excluded_recv_count = 0
-        
-        # 混在ロケを _blocked_dest_locs にも追加（退避チェーンからも完全ブロック）
-        _blocked_dest_locs |= multi_sku_locs
 
-        logger.debug(f"[optimizer] 複数SKU混在ロケ除外: {len(multi_sku_locs)}ロケ → 移動元から{excluded_inv_count}件除外, 移動先・退避先から完全ブロック")
+        # strict ロケを _blocked_dest_locs にも追加（退避チェーンからも完全ブロック）
+        _blocked_dest_locs |= _multi_sku_dest_blocked
+
+        logger.debug(
+            f"[optimizer] 複数SKU混在ロケ除外: strict={len(multi_sku_locs_strict)}ロケ→完全ブロック, "
+            f"receivable={len(multi_sku_locs_receivable)}ロケ→移動元のみ除外({excluded_inv_count}件)"
+        )
         try:
             _publish_progress(get_current_trace_id(), {
                 "type": "info", "phase": "filter",
-                "message": f"複数SKU混在ロケ除外: {len(multi_sku_locs)}ロケ → 移動元{excluded_inv_count}件, 移動先・退避先から完全ブロック"
+                "message": (
+                    f"複数SKU混在ロケ除外: strict={len(multi_sku_locs_strict)}ロケ完全ブロック, "
+                    f"receivable={len(multi_sku_locs_receivable)}ロケ移動元{excluded_inv_count}件除外"
+                )
             })
         except Exception:
             pass
@@ -6755,6 +6783,7 @@ def plan_relocation(
     # _original_skus_by_loc に存在しないロケ、または存在するがSKU数=0のロケが対象
     # can_receive_set がある場合はそのロケ、ない場合は shelf_usage のロケを基準にする
     _original_empty_locs: Set[str] = set()
+    _original_receivable_locs: Set[str] = set()  # 空き(0SKU) + 1-2SKU ロケ（受入可能集合）
     if getattr(cfg, "allow_empty_loc_multi_sku", True):
         _all_known_locs: Set[str] = set()
         if can_receive_set is not None:
@@ -6769,9 +6798,14 @@ def plan_relocation(
         # （can_receive_set から _original_skus_by_loc を引いた差分）
         if can_receive_set is not None:
             _original_empty_locs |= can_receive_set - set(_original_skus_by_loc.keys())
-        # multi_sku_locs（元々混在）は除外
-        _original_empty_locs -= multi_sku_locs
-        logger.debug(f"[optimizer] _original_empty_locs: {len(_original_empty_locs)}ロケ（元々空きだったロケ）")
+        # strict（3SKU以上）は除外
+        _original_empty_locs -= multi_sku_locs_strict
+        # 受入可能集合 = 空き(0SKU) + 1-2SKU ロケ
+        _original_receivable_locs = _original_empty_locs | multi_sku_locs_receivable
+        logger.debug(
+            f"[optimizer] _original_empty_locs: {len(_original_empty_locs)}ロケ（元々空き）, "
+            f"_original_receivable_locs: {len(_original_receivable_locs)}ロケ（空き+1-2SKU）"
+        )
 
     # ベクトル化: apply不使用で高速化
     loc_str = inv["ロケーション"].astype(str).str.zfill(8)
@@ -7020,7 +7054,7 @@ def plan_relocation(
         lots_by_loc_sku=_pass_lots_by_loc_sku,
         moved_indices=_moved_indices,
         blocked_dest_locs=_blocked_dest_locs,
-        blocked_source_locs=multi_sku_locs if multi_sku_locs else None,
+        blocked_source_locs=_multi_sku_source_blocked if _multi_sku_source_blocked else None,
     )
     all_candidate_moves.extend(pc_moves)
     _log(f"Pass-C consolidate: candidates={len(pc_moves)} time={time.perf_counter()-pc_t0:.2f}s")
@@ -8508,9 +8542,9 @@ def plan_relocation(
             original_skus_by_loc=_original_skus_by_loc,
             original_qty_by_loc_sku=_original_qty_by_loc_sku_full,
             blocked_dest_locs=_blocked_dest_locs,
-            blocked_source_locs=multi_sku_locs if multi_sku_locs else None,
+            blocked_source_locs=_multi_sku_source_blocked if _multi_sku_source_blocked else None,
             original_inv_lot_levels=_original_inv_lot_levels,
-            original_empty_locs=_original_empty_locs if getattr(cfg, "allow_empty_loc_multi_sku", True) else None,
+            original_empty_locs=_original_receivable_locs if getattr(cfg, "allow_empty_loc_multi_sku", True) else None,
         )
         logger.debug(f"[optimizer] enforce_constraints completed: {len(accepted)} accepted out of {len(moves)}")
 
@@ -8653,7 +8687,11 @@ def plan_relocation(
         # --- 混在ロケ移動の最終除去 ---
         # _resolve_move_dependencies で依存チェーン再構成後に混在ロケからの移動が
         # 残っている場合があるため、最終チェックで除去する
-        if multi_sku_locs:
+        # from_loc: 2SKU以上（_multi_sku_source_blocked）からの移動は全て除去
+        # to_loc: 3SKU以上（multi_sku_locs_strict）への移動は全て除去
+        _final_blocked_src = _multi_sku_source_blocked
+        _final_blocked_dst = multi_sku_locs_strict
+        if _final_blocked_src or _final_blocked_dst:
             _pre_blocked = len(accepted)
             _blocked_chains: Set[str] = set()
             _blocked_indices: Set[int] = set()  # チェーンなし移動のインデックス追跡
@@ -8661,7 +8699,7 @@ def plan_relocation(
             for _idx_m, m in enumerate(accepted):
                 _fl = str(m.from_loc).zfill(8)
                 _tl = str(m.to_loc).zfill(8)
-                if _fl in multi_sku_locs or _tl in multi_sku_locs:
+                if _fl in _final_blocked_src or _tl in _final_blocked_dst:
                     _cg = getattr(m, 'chain_group_id', None)
                     if _cg:
                         _blocked_chains.add(_cg)
@@ -8823,7 +8861,7 @@ def plan_relocation(
                     if getattr(cfg, "allow_empty_loc_multi_sku", True):
                         _sn_allowed_prefixes = tuple(getattr(cfg, "multi_sku_allowed_chain_prefixes",
                             ("p1fifo", "swap_fifo_", "fifo_direct_", "p0rebal_", "p2consol_")))
-                        _sn_is_originally_empty = to_loc in _original_empty_locs
+                        _sn_is_originally_empty = to_loc in _original_receivable_locs
                         _sn_is_allowed_pass = bool(
                             _sn_is_originally_empty and cg and any(cg.startswith(p) for p in _sn_allowed_prefixes)
                         )

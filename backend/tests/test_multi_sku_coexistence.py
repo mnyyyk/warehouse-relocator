@@ -67,7 +67,8 @@ def _make_move(sku, lot, qty, from_loc, to_loc, chain_group_id=None, execution_o
 
 
 def _call_enforce(sku_master, inv, moves, cfg=None, original_empty_locs=None,
-                  original_skus_by_loc=None, original_qty_by_loc_sku=None):
+                  original_skus_by_loc=None, original_qty_by_loc_sku=None,
+                  blocked_source_locs=None, blocked_dest_locs=None):
     from app.services.optimizer import enforce_constraints
     return enforce_constraints(
         sku_master=sku_master,
@@ -77,18 +78,24 @@ def _call_enforce(sku_master, inv, moves, cfg=None, original_empty_locs=None,
         original_skus_by_loc=original_skus_by_loc,
         original_qty_by_loc_sku=original_qty_by_loc_sku,
         original_empty_locs=original_empty_locs,
+        blocked_source_locs=blocked_source_locs,
+        blocked_dest_locs=blocked_dest_locs,
     )
 
 
-def _call_check(to_loc, sku_id, qty, pack_vol, original_empty_locs, sim_skus_by_loc,
-                sim_vol_by_loc, sku_pack_band, level, cfg=None):
-    from app.services.optimizer import _check_empty_loc_coexistence
-    return _check_empty_loc_coexistence(
+def _call_check(to_loc, sku_id, qty, pack_vol, original_receivable_locs, sim_skus_by_loc,
+                sim_vol_by_loc, sku_pack_band, level, cfg=None,
+                # 後方互換: 旧引数名でも動作するようにエイリアス
+                original_empty_locs=None):
+    from app.services.optimizer import _check_multi_sku_coexistence
+    # original_empty_locs が渡された場合は receivable_locs として使用（旧テスト互換）
+    recv = original_receivable_locs if original_receivable_locs is not None else original_empty_locs
+    return _check_multi_sku_coexistence(
         to_loc=to_loc,
         sku_id=sku_id,
         qty=qty,
         pack_vol=pack_vol,
-        original_empty_locs=original_empty_locs,
+        original_receivable_locs=recv,
         sim_skus_by_loc=sim_skus_by_loc,
         sim_vol_by_loc=sim_vol_by_loc,
         sku_pack_band=sku_pack_band,
@@ -101,7 +108,7 @@ def _call_check(to_loc, sku_id, qty, pack_vol, original_empty_locs, sim_skus_by_
 # ゲート関数 _check_empty_loc_coexistence のユニットテスト
 # ============================================================================
 
-class TestCheckEmptyLocCoexistence:
+class TestCheckMultiSkuCoexistence:
     """_check_empty_loc_coexistence ゲート関数の単体テスト。"""
 
     def _empty_sets(self, loc="00100100"):
@@ -250,18 +257,18 @@ class TestCheckEmptyLocCoexistence:
         assert reason == "multi_sku_level_disallowed"
 
     # ------------------------------------------------------------------
-    # テスト: 元々空きでないロケはフォールスルー
+    # テスト: receivable_locs に含まれないロケはフォールスルー
     # ------------------------------------------------------------------
-    def test_non_empty_loc_fallthrough(self):
-        """元々空きでないロケ → (False, None) でフォールスルー"""
+    def test_non_receivable_loc_fallthrough(self):
+        """receivable_locs に含まれないロケ（3SKU以上 = strict blocked）→ (False, None) でフォールスルー"""
         cfg = _make_cfg()
         loc = "00100100"
-        empty = {"00100200"}  # 別のロケだけが空き
+        receivable = {"00100200"}  # 別のロケだけが受入可能
         sim_skus = {loc: {"SKU_A"}}
         sim_vol = {loc: 0.1}
         band = {"SKU_A": "medium", "SKU_B": "medium"}
 
-        allowed, reason = _call_check(loc, "SKU_B", 1, 0.05, empty, sim_skus, sim_vol, band, 1, cfg)
+        allowed, reason = _call_check(loc, "SKU_B", 1, 0.05, receivable, sim_skus, sim_vol, band, 1, cfg)
         assert allowed is False
         assert reason is None  # フォールスルー
 
@@ -291,25 +298,25 @@ class TestEnforceConstraintsMultiSku:
         ])
 
     # ------------------------------------------------------------------
-    # テスト6: 元々複数SKU混在ロケは移動元・移動先にならない（既存ルール回帰）
+    # テスト6: 元々3SKU以上のロケは strict blocked（移動元・移動先どちらも不可）
     # ------------------------------------------------------------------
-    def test_case6_original_multi_sku_loc_blocked(self):
-        """元々複数SKU混在ロケへの着地は blocked_dest_locs で拒否される"""
+    def test_case6_original_strict_multi_sku_loc_blocked(self):
+        """元々3SKU以上の混在ロケへの着地は blocked_dest_locs で拒否される"""
         sku_master = self._base_sku_master()
         inv = self._base_inv()
-        mixed_loc = "00100200"
+        strict_loc = "00100200"
 
         cfg = _make_cfg(allow_empty_loc_multi_sku=True)
         moves = [
-            _make_move("SKU_A", "LA1", 2, "00301001", mixed_loc, chain_group_id="p2consol_001"),
+            _make_move("SKU_A", "LA1", 2, "00301001", strict_loc, chain_group_id="p2consol_001"),
         ]
 
-        # original_empty_locs には mixed_loc を含めない（元々空きではない）
+        # original_empty_locs には strict_loc を含めない（元々3SKU以上）
         original_empty_locs: Set[str] = set()
         original_skus_by_loc = {
             "00301001": {"SKU_A"},
             "00301002": {"SKU_B"},
-            mixed_loc: {"SKU_X", "SKU_Y"},  # 元々複数SKU混在
+            strict_loc: {"SKU_X", "SKU_Y", "SKU_Z"},  # 元々3SKU混在 → strict blocked
         }
 
         result = _call_enforce(
@@ -319,13 +326,14 @@ class TestEnforceConstraintsMultiSku:
             original_qty_by_loc_sku={
                 ("00301001", "SKU_A"): 2.0,
                 ("00301002", "SKU_B"): 2.0,
-                (mixed_loc, "SKU_X"): 1.0,
-                (mixed_loc, "SKU_Y"): 1.0,
+                (strict_loc, "SKU_X"): 1.0,
+                (strict_loc, "SKU_Y"): 1.0,
+                (strict_loc, "SKU_Z"): 1.0,
             },
         )
-        # foreign_sku チェックで rejected される（mixed_loc にSKU_X, SKU_Y がいる）
-        accepted_to_mixed = [m for m in result if str(m.to_loc).zfill(8) == mixed_loc]
-        assert len(accepted_to_mixed) == 0, "元々複数SKU混在ロケへの着地は拒否されるべき"
+        # strict blocked なので拒否される
+        accepted_to_strict = [m for m in result if str(m.to_loc).zfill(8) == strict_loc]
+        assert len(accepted_to_strict) == 0, "元々3SKU以上の混在ロケへの着地は拒否されるべき"
 
     # ------------------------------------------------------------------
     # テスト7: Pass-C と退避チェーン経由のmoveは複数SKUロケに着地しない
@@ -705,3 +713,243 @@ class TestMultiSkuReviewerFixes:
         assert len(accepted_skuc_to_target) == 0, (
             f"スワップ後の容積(0.7) + SKU_C(0.3) = 1.0 > cap 0.9 で却下されるべき: {len(accepted_skuc_to_target)}件受理"
         )
+
+
+# ============================================================================
+# 新規テスト: 元々1-2SKUロケへの追加受入（拡張仕様）
+# ============================================================================
+
+class TestMultiSkuReceivableLocs:
+    """元々1-2SKUのロケへの追加受入テスト（Case R1-R8）。"""
+
+    def _base_cfg(self, **kwargs):
+        defaults = dict(
+            allow_empty_loc_multi_sku=True,
+            multi_sku_max_per_loc=3,
+            multi_sku_level1_vol_cap=0.9,
+            multi_sku_level2_vol_cap=0.3,
+            multi_sku_pack_band_match=True,
+            multi_sku_target_levels=(1, 2),
+            multi_sku_allowed_chain_prefixes=("p2consol_",),
+            enforce_level_vol_cap=True,
+        )
+        defaults.update(kwargs)
+        return _make_cfg(**defaults)
+
+    # ------------------------------------------------------------------
+    # Case R1: 元々2SKUロケ（同pack帯・容積内）に1SKU追加 → 受理（3SKU）
+    # ------------------------------------------------------------------
+    def test_r1_two_sku_loc_accepts_one_more(self):
+        """元々2SKUロケ（同pack帯・0.1㎥）に1SKU追加 → 受理して3SKU"""
+        cfg = self._base_cfg()
+        loc = "00100100"  # Lv1
+        receivable = {loc}  # 1-2SKUロケを receivable として登録
+        sim_skus = {loc: {"SKU_X", "SKU_Y"}}  # 既に2SKUいる
+        sim_vol = {loc: 0.1}
+        band = {"SKU_X": "medium", "SKU_Y": "medium", "SKU_A": "medium"}
+
+        allowed, reason = _call_check(loc, "SKU_A", 1, 0.05, receivable, sim_skus, sim_vol, band, 1, cfg)
+        assert allowed is True, f"2SKUロケへの追加は受理されるべき: {reason}"
+
+    # ------------------------------------------------------------------
+    # Case R2: 元々2SKUロケに2SKU追加 → 1件目受理、2件目却下（4SKU超）
+    # ------------------------------------------------------------------
+    def test_r2_two_sku_loc_second_addition_rejected(self):
+        """元々2SKUロケに2SKU連続追加 → 1件目(3SKU)は受理、2件目(4SKU)は却下"""
+        cfg = self._base_cfg()
+        loc = "00100100"
+        receivable = {loc}
+        band = {"SKU_X": "medium", "SKU_Y": "medium", "SKU_A": "medium", "SKU_B": "medium"}
+
+        # 1件目: 2SKU → 3SKU → 受理
+        sim_skus = {loc: {"SKU_X", "SKU_Y"}}
+        sim_vol = {loc: 0.1}
+        allowed1, reason1 = _call_check(loc, "SKU_A", 1, 0.05, receivable, sim_skus, sim_vol, band, 1, cfg)
+        assert allowed1 is True, f"1件目は受理されるべき: {reason1}"
+
+        # 状態更新（SKU_A を追加）
+        sim_skus[loc].add("SKU_A")
+        sim_vol[loc] += 0.05
+
+        # 2件目: 3SKU → 4SKU → 却下（上限超過）
+        allowed2, reason2 = _call_check(loc, "SKU_B", 1, 0.05, receivable, sim_skus, sim_vol, band, 1, cfg)
+        assert allowed2 is False, "2件目は上限超過で却下されるべき"
+        assert reason2 == "multi_sku_count_exceeded"
+
+    # ------------------------------------------------------------------
+    # Case R3: 元々1SKUロケに別SKU2つ追加 → 両方受理（3SKU）
+    # ------------------------------------------------------------------
+    def test_r3_one_sku_loc_accepts_two_more(self):
+        """元々1SKUロケに同pack帯SKUを2つ追加 → 両方受理して3SKU"""
+        cfg = self._base_cfg()
+        loc = "00100100"
+        receivable = {loc}
+        band = {"SKU_X": "medium", "SKU_A": "medium", "SKU_B": "medium"}
+
+        # 1件目: 1SKU → 2SKU → 受理
+        sim_skus = {loc: {"SKU_X"}}
+        sim_vol = {loc: 0.1}
+        allowed1, reason1 = _call_check(loc, "SKU_A", 1, 0.1, receivable, sim_skus, sim_vol, band, 1, cfg)
+        assert allowed1 is True, f"1件目は受理されるべき: {reason1}"
+        sim_skus[loc].add("SKU_A")
+        sim_vol[loc] += 0.1
+
+        # 2件目: 2SKU → 3SKU → 受理
+        allowed2, reason2 = _call_check(loc, "SKU_B", 1, 0.1, receivable, sim_skus, sim_vol, band, 1, cfg)
+        assert allowed2 is True, f"2件目は受理されるべき: {reason2}"
+
+    # ------------------------------------------------------------------
+    # Case R4: 元々1SKUロケに別SKU3つ追加 → 3つ目は却下
+    # ------------------------------------------------------------------
+    def test_r4_one_sku_loc_third_addition_rejected(self):
+        """元々1SKUロケにSKUを3つ追加しようとすると3つ目で却下"""
+        cfg = self._base_cfg()
+        loc = "00100100"
+        receivable = {loc}
+        band = {"SKU_X": "medium", "SKU_A": "medium", "SKU_B": "medium", "SKU_C": "medium"}
+
+        # 2つ追加（1SKU→3SKU）まで受理
+        sim_skus = {loc: {"SKU_X", "SKU_A", "SKU_B"}}  # すでに3SKU
+        sim_vol = {loc: 0.15}
+
+        # 4つ目は却下
+        allowed, reason = _call_check(loc, "SKU_C", 1, 0.05, receivable, sim_skus, sim_vol, band, 1, cfg)
+        assert allowed is False, "4SKU目は却下されるべき"
+        assert reason == "multi_sku_count_exceeded"
+
+    # ------------------------------------------------------------------
+    # Case R5: 元々3SKUロケへの投入 → 拒否（strict blocked）
+    # ------------------------------------------------------------------
+    def test_r5_strict_three_sku_loc_rejected(self):
+        """元々3SKUロケは receivable_locs に含まれない → フォールスルー拒否"""
+        cfg = self._base_cfg()
+        loc = "00100100"
+        # receivable_locs に含まれない（strict blocked）
+        receivable: Set[str] = set()
+        sim_skus = {loc: {"SKU_X", "SKU_Y", "SKU_Z"}}
+        sim_vol = {loc: 0.15}
+        band = {"SKU_X": "medium", "SKU_Y": "medium", "SKU_Z": "medium", "SKU_A": "medium"}
+
+        allowed, reason = _call_check(loc, "SKU_A", 1, 0.05, receivable, sim_skus, sim_vol, band, 1, cfg)
+        assert allowed is False
+        assert reason is None  # フォールスルー（従来ロジックに委ねる）
+
+    # ------------------------------------------------------------------
+    # Case R6: 元々2SKUロケで pack帯不一致SKU投入 → 却下
+    # ------------------------------------------------------------------
+    def test_r6_two_sku_loc_pack_band_mismatch_rejected(self):
+        """元々2SKUロケ（medium）にlarge SKUを追加 → pack帯不一致で却下"""
+        cfg = self._base_cfg(multi_sku_pack_band_match=True)
+        loc = "00100100"
+        receivable = {loc}
+        sim_skus = {loc: {"SKU_X", "SKU_Y"}}
+        sim_vol = {loc: 0.1}
+        band = {"SKU_X": "medium", "SKU_Y": "medium", "SKU_LARGE": "large"}
+
+        allowed, reason = _call_check(loc, "SKU_LARGE", 1, 0.1, receivable, sim_skus, sim_vol, band, 1, cfg)
+        assert allowed is False
+        assert reason == "multi_sku_pack_band_mismatch"
+
+    # ------------------------------------------------------------------
+    # Case R7: 元々2SKUロケ（Lv2、合計0.25㎥）に0.1㎥SKU → level_vol_cap で却下
+    # ------------------------------------------------------------------
+    def test_r7_two_sku_loc_lv2_vol_cap_exceeded(self):
+        """元々2SKUロケ（Lv2, 0.25㎥）に0.1㎥SKU追加 → 合計0.35 > cap 0.3 で却下"""
+        sku_master = _make_sku_master([
+            {"sku_id": "SKU_X", "pack_qty": 30, "vol_m3": 0.125},
+            {"sku_id": "SKU_Y", "pack_qty": 30, "vol_m3": 0.125},
+            {"sku_id": "SKU_A", "pack_qty": 30, "vol_m3": 0.1},
+        ])
+        target_loc = "00200100"  # Lv2
+
+        inv = _make_inv([
+            # target_loc に既存2SKU（合計0.25㎥）を追加 → shelf_usage[target_loc]=0.25 が計算される
+            {"sku": "SKU_X", "lot": "LX1", "lot_key": 20250101, "loc": target_loc, "qty": 1, "vol_each": 0.125},
+            {"sku": "SKU_Y", "lot": "LY1", "lot_key": 20250101, "loc": target_loc, "qty": 1, "vol_each": 0.125},
+            {"sku": "SKU_A", "lot": "LA1", "lot_key": 20250101, "loc": "00301003", "qty": 1, "vol_each": 0.1},
+        ])
+
+        cfg = _make_cfg(
+            allow_empty_loc_multi_sku=True,
+            multi_sku_max_per_loc=3,
+            multi_sku_level1_vol_cap=0.9,
+            multi_sku_level2_vol_cap=0.3,
+            multi_sku_pack_band_match=False,
+            multi_sku_target_levels=(1, 2),
+            multi_sku_allowed_chain_prefixes=("p2consol_",),
+            enforce_level_vol_cap=True,
+        )
+        # target_loc は元々2SKU（receivable）で既に0.25㎥使用中
+        original_empty_locs: Set[str] = set()  # 空きロケはなし
+        original_skus_by_loc = {
+            "00301001": {"SKU_X"},
+            "00301002": {"SKU_Y"},
+            "00301003": {"SKU_A"},
+            target_loc: {"SKU_X", "SKU_Y"},  # 元々2SKU
+        }
+        original_qty = {
+            ("00301001", "SKU_X"): 1.0,
+            ("00301002", "SKU_Y"): 1.0,
+            ("00301003", "SKU_A"): 1.0,
+            (target_loc, "SKU_X"): 1.0,
+            (target_loc, "SKU_Y"): 1.0,
+        }
+        moves = [
+            _make_move("SKU_A", "LA1", 1, "00301003", target_loc, chain_group_id="p2consol_001"),
+        ]
+
+        result = _call_enforce(
+            sku_master, inv, moves, cfg=cfg,
+            original_empty_locs=original_empty_locs,
+            original_skus_by_loc=original_skus_by_loc,
+            original_qty_by_loc_sku=original_qty,
+        )
+        # level_vol_cap (Lv2: 0.3㎥) を超えるため却下
+        accepted_to_target = [m for m in result if str(m.to_loc).zfill(8) == target_loc]
+        assert len(accepted_to_target) == 0, (
+            f"Lv2容積 0.25+0.1=0.35 > cap 0.3 のため却下されるべき: {len(accepted_to_target)}件受理"
+        )
+
+    # ------------------------------------------------------------------
+    # Case R8: 元々2SKUロケからの move-out → 依然として禁止（source blocked）
+    # ------------------------------------------------------------------
+    def test_r8_two_sku_loc_source_blocked(self):
+        """元々2SKUロケからの移動は source_blocked で拒否される"""
+        sku_master = _make_sku_master([
+            {"sku_id": "SKU_X", "pack_qty": 30, "vol_m3": 0.05},
+            {"sku_id": "SKU_Y", "pack_qty": 30, "vol_m3": 0.05},
+        ])
+        source_loc = "00100100"  # Lv1: 元々2SKU
+        dest_loc = "00100200"    # Lv1: 元々空き
+
+        inv = _make_inv([
+            {"sku": "SKU_X", "lot": "LX1", "lot_key": 20250101, "loc": source_loc, "qty": 1, "vol_each": 0.05},
+        ])
+
+        cfg = _make_cfg(
+            allow_empty_loc_multi_sku=True,
+            multi_sku_allowed_chain_prefixes=("p2consol_",),
+        )
+        original_empty_locs: Set[str] = {dest_loc}
+        original_skus_by_loc = {
+            source_loc: {"SKU_X", "SKU_Y"},  # 元々2SKU → source blocked
+            dest_loc: set(),
+        }
+        original_qty = {
+            (source_loc, "SKU_X"): 1.0,
+            (source_loc, "SKU_Y"): 1.0,
+        }
+        moves = [
+            _make_move("SKU_X", "LX1", 1, source_loc, dest_loc, chain_group_id="p2consol_001"),
+        ]
+
+        # source_blocked を明示: 元々2SKU以上のロケは移動元に使えない
+        result = _call_enforce(
+            sku_master, inv, moves, cfg=cfg,
+            original_empty_locs=original_empty_locs,
+            original_skus_by_loc=original_skus_by_loc,
+            original_qty_by_loc_sku=original_qty,
+            blocked_source_locs={source_loc},
+        )
+        # source_blocked のため拒否
+        assert len(result) == 0, f"元々2SKUロケからの移動は拒否されるべき: {len(result)}件受理"
